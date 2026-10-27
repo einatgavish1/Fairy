@@ -7,7 +7,7 @@
 <title>Fairy · קליטת מסמכים</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&family=Orbitron:wght@800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 
@@ -83,6 +83,9 @@
       <div class="card"><span>מע״מ</span><b id="sumVat">0</b></div>
       <div class="card main"><span>סה״כ כולל מע״מ</span><b id="sumTotal">0</b></div>
     </div>
+    <label class="dup-note" id="dupNote" hidden>
+      <input type="checkbox" id="dupOnly"> ⚠️ <b id="dupCount">0</b> מסמכים נראים כפולים. סמנו כדי להציג רק אותם.
+    </label>
     <div class="toolbar">
       <input type="search" id="search" placeholder="חיפוש ספק, פירוט, מספר מסמך…">
       <select id="clientFilter"><option value="">כל הלקוחות</option></select>
@@ -128,6 +131,7 @@
       <div class="dlg-preview" id="dlgPreview"></div>
       <div>
         <h2>עריכת מסמך</h2>
+        <p class="dup-warn" id="dlgDup" hidden></p>
         <div class="fields" id="dlgFields"></div>
         <div class="actions">
           <button type="button" class="danger" id="delBtn">מחיקה</button>
@@ -158,6 +162,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=3"></script>
+<script type="module" src="app.js?v=4"></script>
 </body>
 </html>

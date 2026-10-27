@@ -1,5 +1,5 @@
 import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES } from "./extract.js?v=2";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES } from "./extract.js?v=3";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => (n < 0 ? "-" : "") + "₪" + Math.abs(n || 0).toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -204,11 +204,43 @@ function readFields(box) {
   return out;
 }
 
-// A record that probably is this same document, already saved.
-function findDuplicate(r, exceptId) {
-  return records.find((x) => x.id !== exceptId && (
-    (r.docNo && x.docNo === r.docNo && (x.supplier === r.supplier || x.supplierId === r.supplierId)) ||
-    (r.amount && x.amount === r.amount && x.date === r.date && x.supplier === r.supplier)));
+// ---------- duplicates ----------
+// The same file (byte for byte, by its SHA-256 fingerprint), or the same document scanned again:
+// same supplier with the same document number, or the same supplier, date and amount.
+
+const normName = (s) => String(s || "").replace(/[^\p{L}\d]/gu, "").replace(/בעמ$|ltd$/i, "");
+function sameSupplier(a, b) {
+  if (a.supplierId && a.supplierId === b.supplierId) return true;
+  const x = normName(a.supplier), y = normName(b.supplier);
+  return x.length >= 2 && y.length >= 2 && (x.includes(y) || y.includes(x));
+}
+// Why two records look like the same document ("" when they don't).
+function dupReason(a, b) {
+  if (a.fileHash && a.fileHash === b.fileHash) return "אותו קובץ בדיוק";
+  if (a.docNo && a.docNo === b.docNo && sameSupplier(a, b)) return "אותו ספק ואותו מספר מסמך";
+  if (a.amount && a.amount === b.amount && a.date && a.date === b.date && sameSupplier(a, b)) return "אותו ספק, תאריך וסכום";
+  return "";
+}
+const describe = (x) => [x.supplier, showDate(x.date), x.amount ? fmt(x.amount) : "", x.fileName].filter(Boolean).join(" · ");
+
+// A saved record, or a file still waiting in this upload, that looks like the same document.
+function findDuplicate(r, { exceptId, exceptItem } = {}) {
+  for (const x of records) {
+    const why = x.id !== exceptId && dupReason(r, x);
+    if (why) return { why, what: `כבר נקלט: ${describe(x)}` };
+  }
+  for (const it of pending) {
+    if (it === exceptItem || !it.rec) continue;
+    const x = it.rec();
+    const why = dupReason(r, x);
+    if (why) return { why, what: `מופיע גם בהעלאה הזו: ${describe(x)}` };
+  }
+  return null;
+}
+
+async function fingerprint(file) {
+  const hash = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 // ---------- intake ----------
@@ -334,6 +366,22 @@ async function processFile(file, path, batch) {
   const item = { ready: false };
   pending.add(item);
   try {
+    // The very same file again: say so at once, before spending time on reading it.
+    item.hash = await fingerprint(file);
+    const same = findDuplicate({ fileHash: item.hash }, { exceptItem: item });
+    item.rec = () => ({ fileHash: item.hash, fileName: path });
+    if (same) {
+      toast(`⚠️ כפילות: ${path}`);
+      el.classList.add("dup");
+      el.querySelector(".body").innerHTML = `<p class="dup-warn">⚠️ <b>הקובץ הזה כבר הועלה</b> (${same.why}).<br>${esc(same.what)}</p>
+        <div class="item-actions"><button class="primary drop-it">הסרה</button><button class="ghost go-on">לקלוט בכל זאת</button></div>`;
+      const goOn = await new Promise((ok) => {
+        el.querySelector(".drop-it").onclick = () => ok(false);
+        el.querySelector(".go-on").onclick = () => ok(true);
+      });
+      if (!goOn) { pending.delete(item); el.remove(); syncSaveAll(); return; }
+      el.querySelector(".body").innerHTML = '<div class="status"><span class="label">ממתין…</span><div class="bar"><i></i></div></div>';
+    }
     const { text, preview, ocr } = await oneAtATime(() => readFile(file, status));
     const thumb = el.querySelector(".thumb");
     thumb.innerHTML = `${preview ? `<img src="${preview}" alt="">` : '<span class="soon">אין תצוגה</span>'}<span class="fname">${esc(path)}</span>`;
@@ -341,6 +389,7 @@ async function processFile(file, path, batch) {
     const found = { client: $("defaultClient").value.trim(), ...parseText(text) };
     const missing = FIELDS.filter((f) => f.need && !found[f.k]).length;
     el.querySelector(".body").innerHTML = `
+      <p class="dup-warn" hidden></p>
       <div class="fields">${fieldsHtml(found)}</div>
       <div class="item-actions">
         <button class="primary save">שמירה</button>
@@ -350,16 +399,30 @@ async function processFile(file, path, batch) {
       <details class="raw"><summary>הטקסט שזוהה${ocr ? " (זיהוי מתמונה)" : ""}</summary><pre>${esc(text)}</pre></details>`;
     const box = el.querySelector(".fields");
     bindFields(box);
+    item.rec = () => ({ ...readFields(box), fileHash: item.hash, fileName: path });
+    // Same document by its details (another scan or photo of it): a warning that follows the edits.
+    const warn = el.querySelector(".dup-warn");
+    const checkDup = () => {
+      const dup = findDuplicate(item.rec(), { exceptItem: item });
+      warn.hidden = !dup;
+      el.classList.toggle("dup", !!dup);
+      if (dup) warn.innerHTML = `⚠️ <b>ייתכן שזו כפילות</b> (${dup.why}).<br>${esc(dup.what)}`;
+      return dup;
+    };
+    box.addEventListener("input", checkDup);
+    if (checkDup()) toast(`⚠️ ייתכן שזו כפילות: ${path}`);
     item.ready = true;
     item.save = async () => {
-      const rec = readFields(box);
+      const rec = item.rec();
       if (!rec.amount && !rec.supplier) { toast("חסרים ספק וסכום"); return; }
-      const dup = findDuplicate(rec);
-      if (dup && !confirm(`נראה שהמסמך הזה כבר נקלט (${dup.supplier}, ${showDate(dup.date)}, ${fmt(dup.amount)}). לשמור בכל זאת?`)) return;
+      const dup = findDuplicate(rec, { exceptItem: item });
+      if (dup && !confirm(`ייתכן שזו כפילות (${dup.why}).\n${dup.what}\n\nלשמור בכל זאת?`)) return;
       const btn = el.querySelector(".save");
       btn.disabled = true;
       try {
-        await store.add({ ...rec, fileName: path }, preview);
+        await store.add(rec, preview);
+        warn.hidden = true;
+        el.classList.remove("dup");
         pending.delete(item);
         item.ready = false;
         el.classList.add("saved");
@@ -390,7 +453,7 @@ function zoom(src) {
 // ---------- documents list ----------
 
 let sortDir = -1;
-const filters = ["search", "clientFilter", "catFilter", "monthFilter"];
+const filters = ["search", "clientFilter", "catFilter", "monthFilter", "dupOnly"];
 filters.forEach((id) => $(id).addEventListener("input", renderTable));
 document.querySelector("th.sort").onclick = () => { sortDir = -sortDir; renderTable(); };
 
@@ -412,14 +475,32 @@ function renderAll() {
   const curYear = $("sumYear").value;
   $("sumYear").innerHTML = years.map((y) => `<option>${y}</option>`).join("") || `<option>${new Date().getFullYear()}</option>`;
   if (years.includes(curYear)) $("sumYear").value = curYear;
+  markDuplicates();
   renderTable();
   renderSummary();
 }
 
+// id -> why it looks like another saved record. Recomputed whenever the records change.
+let dupOf = new Map();
+function markDuplicates() {
+  dupOf = new Map();
+  for (let i = 0; i < records.length; i++)
+    for (let j = i + 1; j < records.length; j++) {
+      const why = dupReason(records[i], records[j]);
+      if (!why) continue;
+      dupOf.set(records[i].id, `${why}, כמו: ${describe(records[j])}`);
+      dupOf.set(records[j].id, `${why}, כמו: ${describe(records[i])}`);
+    }
+  const n = dupOf.size;
+  $("dupNote").hidden = !n;
+  $("dupCount").textContent = n;
+  if (!n) $("dupOnly").checked = false;
+}
+
 function filtered() {
   const q = $("search").value.trim().toLowerCase();
-  const client = $("clientFilter").value, cat = $("catFilter").value, month = $("monthFilter").value;
-  return records.filter((r) =>
+  const client = $("clientFilter").value, cat = $("catFilter").value, month = $("monthFilter").value, dupOnly = $("dupOnly").checked;
+  return records.filter((r) => (!dupOnly || dupOf.has(r.id)) &&
     (!client || r.client === client) && (!cat || r.category === cat) && (!month || (r.date || "").startsWith(month)) &&
     (!q || [r.supplier, r.supplierId, r.details, r.docNo, r.client, r.category, r.fileName].some((v) => String(v || "").toLowerCase().includes(q))))
     .sort((a, b) => sortDir * (a.date || "").localeCompare(b.date || ""));
@@ -428,10 +509,10 @@ function filtered() {
 function renderTable() {
   const rows = filtered();
   $("sortArrow").textContent = sortDir < 0 ? "▼" : "▲";
-  $("rows").innerHTML = rows.map((r) => `<tr data-id="${r.id}">
+  $("rows").innerHTML = rows.map((r) => `<tr data-id="${r.id}"${dupOf.has(r.id) ? ' class="dup"' : ""}>
     <td class="num">${showDate(r.date)}</td>
     <td>${esc(r.client)}</td>
-    <td>${esc(r.supplier)}${r.details ? `<small>${esc(r.details)}</small>` : ""}</td>
+    <td>${dupOf.has(r.id) ? `<span class="tag dup-tag" title="${esc(dupOf.get(r.id))}">⚠️ כפול</span> ` : ""}${esc(r.supplier)}${r.details ? `<small>${esc(r.details)}</small>` : ""}</td>
     <td>${r.category ? `<span class="tag">${esc(r.category)}</span>` : ""}</td>
     <td>${esc(r.docType)}${r.docNo ? `<small>מס׳ ${esc(r.docNo)}</small>` : ""}</td>
     <td class="num">${r.vat ? fmt(r.vat) : ""}</td>
@@ -455,6 +536,8 @@ async function openEntry(id) {
   const box = $("dlgFields");
   box.innerHTML = fieldsHtml(r);
   bindFields(box);
+  $("dlgDup").hidden = !dupOf.has(id);
+  $("dlgDup").textContent = dupOf.has(id) ? `⚠️ ייתכן שזו כפילות: ${dupOf.get(id)}` : "";
   $("dlgPreview").innerHTML = '<p class="soon">טוען תמונה…</p>';
   $("entryDlg").showModal();
   const src = await store.preview(id);

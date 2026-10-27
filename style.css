@@ -96,6 +96,14 @@ tbody tr { cursor: pointer; }
 tbody tr:hover { background: rgba(255, 255, 255, 0.08); }
 tfoot td { font-weight: 700; border-bottom: 0; }
 .tag { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--glass-line); white-space: nowrap; }
+/* duplicates */
+.dup-warn { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: rgba(255, 155, 147, .16); border: 1px solid var(--neg); color: #ffd9d5; font-size: 14px; }
+.item.dup { border-color: var(--neg); }
+.item-actions .go-on { margin-inline-start: 4px; }
+tr.dup td { background: rgba(255, 155, 147, .1); }
+.tag.dup-tag { border-color: var(--neg); color: var(--neg); cursor: help; }
+.dup-note { display: flex; gap: 8px; align-items: center; margin: 0 0 10px; padding: 10px 12px; border-radius: 10px; cursor: pointer;
+  background: rgba(255, 155, 147, .14); border: 1px solid var(--neg); font-size: 14px; }
 .empty { padding: 24px; text-align: center; color: var(--muted); }
 
 /* ---- summary ---- */
