@@ -1,6 +1,7 @@
 import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
 import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=9";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
+import { ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, isIncome } from "./accounts.js?v=2";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => (n < 0 ? "-" : "") + "₪" + Math.abs(n || 0).toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -316,7 +317,7 @@ function chooseClient(name) {
   try { localStorage.setItem("fairy-last-client", name); } catch {}
   const all = name === ALL;
   const title = all ? "" : `· ${name || "לא שויכו ללקוח"}`;
-  $("pageClient").textContent = $("pageClient2").textContent = $("pageClient3").textContent = title;
+  $("pageClient").textContent = $("pageClient2").textContent = $("pageClient3").textContent = $("pageClient4").textContent = title;
   $("clientPick").hidden = !all;
   $("clientFixed").hidden = all;
   $("clientFixed").innerHTML = all ? "" : `המסמכים יישמרו ללקוח: <b>${esc(name || "ללא שיוך")}</b>`;
@@ -349,6 +350,7 @@ const FIELDS = [
   { k: "docNo", label: "מספר מסמך" },
   { k: "amount", label: "סכום כולל מע״מ (₪)", type: "number", need: true },
   { k: "vat", label: "מע״מ (₪)", type: "number" },
+  { k: "account", label: "חשבון (פקודות יומן)", options: () => ACCOUNTS.filter(([c]) => /^[4-6]|^15/.test(c)).map(([c, n]) => [c, `${c} · ${n}`]) },
   { k: "details", label: "פירוט", wide: true },
 ];
 
@@ -357,9 +359,10 @@ function fieldsHtml(v) {
     const val = v[f.k] ?? "";
     let input;
     if (f.options) {
-      const list = f.options();
-      const all = val && !list.includes(val) ? [val, ...list] : list;
-      input = `<select name="${f.k}"><option value=""></option>${all.map((o) => `<option${o === val ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+      // An option is a value, or [value, what is shown].
+      const list = f.options().map((o) => (Array.isArray(o) ? o : [o, o]));
+      const all = val && !list.some(([o]) => o === val) ? [[val, val], ...list] : list;
+      input = `<select name="${f.k}"><option value=""></option>${all.map(([o, t]) => `<option value="${esc(o)}"${o === val ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
     } else {
       input = `<input name="${f.k}" type="${f.type || "text"}" value="${esc(val)}"${f.list ? ` list="${f.list}" autocomplete="off"` : ""}${f.type === "number" ? ' step="0.01" inputmode="decimal" dir="ltr"' : ""}>`;
     }
@@ -880,6 +883,7 @@ function renderAll() {
   if (!review) $("reviewOnly").checked = false;
   renderTable();
   renderSummary();
+  renderJournal();
 }
 
 // id -> why it looks like another saved record. Recomputed whenever the records change.
@@ -1067,7 +1071,7 @@ async function openEntry(id, fallback) {
   if (!r) return;
   editing = id;
   const box = $("dlgFields");
-  box.innerHTML = fieldsHtml(r);
+  box.innerHTML = fieldsHtml({ ...r, account: accountOf(r) });
   bindFields(box);
   const why = [r.reviewWhy, dupOf.get(id) && `ייתכן כפילות: ${dupOf.get(id)}`].filter(Boolean).join(" · ");
   $("dlgTitle").textContent = r.status === "failed" ? "מסמך שלא נקרא: מלאו ידנית" : needsReview(r) ? "מסמך לבדיקה" : "עריכת מסמך";
@@ -1119,6 +1123,124 @@ $("exportBtn").onclick = () => {
   XLSX.utils.book_append_sheet(wb, ws, "מסמכים");
   const who = client && client !== ALL ? `${client} ` : "";
   XLSX.writeFile(wb, `מסמכים ${who}${new Date().toISOString().slice(0, 10)}.xlsx`);
+};
+
+// ---------- journal entries (פקודות יומן) ----------
+// Each document as one line, in the layout of the bookkeeping software's import (as in the tax-report
+// workbook): four dates, supplier / details (24 characters at most), debit, credit, amount, reference.
+// An expense debits its account and credits the owner's account (107000); income the other way round.
+// Income lines come first, then expenses, each by date.
+
+// "2024-01-01" -> "01-01-24", as the dates are shown in the workbook.
+const jDate = (iso) => (iso ? `${iso.slice(8, 10)}-${iso.slice(5, 7)}-${iso.slice(2, 4)}` : "");
+// The balance date (the fourth): a document from before the year counts from its first day.
+const balanceDate = (iso, year) => (iso && year && iso < `${year}-01-01` ? `${year}-01-01` : iso);
+
+function journalLines() {
+  const year = $("jYear").value;
+  const lines = records.filter((r) => inScope(r) && (!year || (r.date || "").startsWith(year)))
+    .map((r) => {
+      const account = accountOf(r);
+      const income = isIncome(account);
+      return {
+        r, account, income, date: r.date || "", balance: balanceDate(r.date || "", year),
+        details: (r.supplier || r.details || r.fileName || "").replace(/\s+/g, " ").trim().slice(0, 24),
+        debit: income ? OWNER_ACCOUNT : account, credit: income ? account : OWNER_ACCOUNT,
+        amount: r.amount || 0, ref: r.docNo || "",
+      };
+    });
+  const byDate = (a, b) => a.date.localeCompare(b.date);
+  return { income: lines.filter((l) => l.income).sort(byDate), expenses: lines.filter((l) => !l.income).sort(byDate) };
+}
+
+const accountCell = (l) => {
+  const code = l.income ? l.credit : l.debit;
+  return `<button type="button" class="acc${l.r.account ? "" : " guessed"}" data-acc="${l.r.id}" title="${esc(accountName(code))}${l.r.account ? "" : " (נקבע לפי סוג השירות)"}">${code}<small>${esc(accountName(code))}</small></button>`;
+};
+
+function renderJournal() {
+  const years = [...new Set(records.filter(inScope).map((r) => (r.date || "").slice(0, 4)).filter(Boolean))].sort().reverse();
+  const cur = $("jYear").value;
+  $("jYear").innerHTML = '<option value="">כל השנים</option>' + years.map((y) => `<option>${y}</option>`).join("");
+  $("jYear").value = years.includes(cur) ? cur : (years[0] || "");
+  const { income, expenses } = journalLines();
+  const row = (l) => `<tr data-id="${l.r.id}"${needsReview(l.r) ? ' class="dup"' : ""}>
+      <td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.balance)}</td>
+      <td>${needsReview(l.r) ? '<span title="מסמך לבדיקה">⚠️</span> ' : ""}${esc(l.details)}</td>
+      <td class="num">${l.income ? l.debit : accountCell(l)}</td>
+      <td class="num">${l.income ? accountCell(l) : l.credit}</td>
+      <td class="num">${l.amount.toLocaleString("he-IL", { maximumFractionDigits: 2 })}</td>
+      <td class="num">${esc(l.ref)}</td></tr>`;
+  const section = (title, lines) => (lines.length ? `<tr class="j-section"><td colspan="9">${title}</td></tr>` + lines.map(row).join("") : "");
+  $("jRows").innerHTML = section("הכנסות", income) + section("הוצאות", expenses);
+  $("jEmpty").hidden = income.length + expenses.length > 0;
+}
+$("jYear").addEventListener("input", renderJournal);
+
+// Clicking the account turns it into a list of accounts; picking one saves it on the document.
+$("jRows").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-acc]");
+  if (btn) {
+    const r = records.find((x) => x.id === btn.dataset.acc);
+    if (!r) return;
+    const cur = accountOf(r);
+    const sel = document.createElement("select");
+    sel.className = "acc-pick";
+    sel.innerHTML = ACCOUNTS.filter(([c]) => /^[4-6]|^15/.test(c))
+      .map(([c, n]) => `<option value="${c}"${c === cur ? " selected" : ""}>${c} · ${esc(n)}</option>`).join("");
+    btn.replaceWith(sel);
+    sel.focus();
+    const done = async (save) => {
+      if (save && sel.value !== cur) {
+        try { await store.update(r.id, { account: sel.value }); toast(`החשבון עודכן ל-${sel.value} ${accountName(sel.value)}`); }
+        catch (err) { toast("השמירה נכשלה: " + err.message); }
+      }
+      renderJournal();
+    };
+    sel.onchange = () => done(true);
+    sel.onblur = () => done(false);
+    return;
+  }
+  if (e.target.closest("select")) return;
+  const tr = e.target.closest("tr[data-id]");
+  if (tr) openEntry(tr.dataset.id);
+});
+
+// The same lines as an Excel sheet, laid out like the workbook: real dates shown as dd-mm-yy,
+// a heading row for each part, numbers as numbers.
+$("jExport").onclick = () => {
+  const { income, expenses } = journalLines();
+  const aoa = [], dateRows = [];
+  // Excel's own day number (days since 30-12-1899), so no time zone can move a date by a day.
+  const toDate = (iso) => (iso ? (Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) - Date.UTC(1899, 11, 30)) / 864e5 : "");
+  const put = (title, lines) => {
+    if (!lines.length) return;
+    aoa.push([title, "", "", "", "ספק / פרטים (מוגבל ל 24 תווים)", "חובה", "זכות", "סכום", "אסמכתא"]);
+    for (const l of lines) {
+      dateRows.push(aoa.length);
+      aoa.push([toDate(l.date), toDate(l.date), toDate(l.date), toDate(l.balance), l.details,
+        +l.debit, +l.credit, l.amount, /^\d+$/.test(l.ref) ? +l.ref : l.ref]);
+    }
+    aoa.push([]);
+  };
+  put("הכנסות", income);
+  put("הוצאות", expenses);
+  if (!aoa.length) { toast("אין מה לייצא"); return; }
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  for (const r of dateRows) for (let c = 0; c < 4; c++) {
+    const cell = ws[XLSX.utils.encode_cell({ r, c })];
+    if (cell && cell.t === "n") cell.z = "dd-mm-yy";
+  }
+  for (let r = 0; r < aoa.length; r++) {
+    const cell = ws[XLSX.utils.encode_cell({ r, c: 7 })];
+    if (cell && cell.t === "n") cell.z = Number.isInteger(cell.v) ? "#,##0" : "#,##0.00";
+  }
+  ws["!cols"] = [10, 10, 10, 10, 26, 9, 9, 11, 12].map((wch) => ({ wch }));
+  const wb = XLSX.utils.book_new();
+  wb.Workbook = { Views: [{ RTL: true }] };
+  XLSX.utils.book_append_sheet(wb, ws, "פקודות יומן");
+  const who = client && client !== ALL ? `${client} ` : "";
+  XLSX.writeFile(wb, `פקודות יומן ${who}${$("jYear").value || "כל השנים"}.xlsx`);
 };
 
 // ---------- summary ----------
