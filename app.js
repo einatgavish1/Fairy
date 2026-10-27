@@ -1,5 +1,5 @@
 import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=6";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=7";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => (n < 0 ? "-" : "") + "₪" + Math.abs(n || 0).toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -339,8 +339,8 @@ function reviewReasons(r, { exceptId, noText = false, failed = "" } = {}) {
   else if (noText) why.push("לא נמצא טקסט במסמך");
   const missing = FIELDS.filter((f) => f.need && !r[f.k]).map((f) => f.label.replace(/ \(.*\)/, ""));
   if (missing.length && !failed) why.push(`חסר: ${missing.join(", ")}`);
+  // A document uploaded under a client is theirs even when made out to someone else (a spouse, say).
   if (!r.client) why.push(r.customer ? `הלקוח "${r.customer}" שבמסמך לא נמצא ברשימת הלקוחות` : "לא שויך ללקוח");
-  else if (r.customer && !sameName(r.customer, r.client)) why.push(`במסמך כתוב לקוח אחר: "${r.customer}"`);
   const dup = findDuplicate(r, exceptId);
   if (dup) why.push(`ייתכן כפילות (${dup.why}) של: ${dup.what}`);
   return why;

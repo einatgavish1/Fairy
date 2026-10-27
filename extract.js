@@ -407,17 +407,24 @@ function findDocNo(text) {
 const NOT_A_NAME = /חשבונית|קבלה|מקור|העתק|נאמן\s*למקור|תאריך|לכבוד|עמוד|דף\s*\d|page|invoice|receipt|copy|original|טלפון|טל['׳.:]|פקס|fax|tel|www\.|@|כתובת|רחוב|רח['׳]|ת\.?ד|מיקוד|לקוח|customer|bill\s*to/i;
 const cleanName = (s) => s.replace(ID_RE, "").replace(/(\S)(בע["״']?מ)/, "$1 $2").replace(/[|_*•·]+/g, " ").replace(/\s+/g, " ").replace(/^[\s\-:.,]+|[\s\-:.,]+$/g, "").slice(0, 60);
 
-// The customer the document was made out to ("לכבוד", "שם הלקוח", "Bill to"...): for an accountant
-// that is usually her client. "לכבוד" alone on its line has the name on the next one.
-const CUSTOMER_RE = /(?:לכבוד|שם\s*(?:ה)?לקוח|לקוח(?!ות)|שם\s*המזמין|מזמין|bill(?:ed)?\s*to|sold\s*to|customer(?:\s*name)?|client)\s*[:\-]?\s*(.*)$/i;
+// The customer the document was made out to: for an accountant, her client. The name after "לכבוד"
+// comes first; only without one do "שם הלקוח", "Bill to" and the like count.
+// A label alone on its line has the name on the next one.
+const CUSTOMER_RES = [
+  /לכבוד\s*[:\-]?\s*(.*)$/,
+  /(?:שם\s*(?:ה)?לקוח|לקוח(?!ות)|שם\s*המזמין|מזמין|bill(?:ed)?\s*to|sold\s*to|customer(?:\s*name)?|client)\s*[:\-]?\s*(.*)$/i,
+];
 function findCustomer(lines) {
-  for (const [i, line] of lines.slice(0, 40).entries()) {
-    const m = line.match(CUSTOMER_RE);
-    if (!m) continue;
-    const pick = (s) => cleanName(s.replace(/\d{5,}.*$/, "")).replace(/^(?:מר|גב['׳.]?|גברת|ה"ה|לכבוד)\s+/, "");
-    let name = pick(m[1]);
-    if (name.replace(/[^\p{L}]/gu, "").length < 2 && lines[i + 1] && !NOT_A_NAME.test(lines[i + 1])) name = pick(lines[i + 1]);
-    if (name.replace(/[^\p{L}]/gu, "").length >= 2 && !/^(?:מס|מספר|קוד|ח\.?פ|ת\.?ז|טלפון|כתובת)/.test(name)) return name;
+  const pick = (s) => cleanName(s.replace(/\s+(?:ת\.?\s?ז|ח\.?\s?פ|ע\.?\s?מ|טל|טלפון|מס['׳]|מספר)[.:'׳\s].*$/, "").replace(/\d{5,}.*$/, "")).replace(/^(?:מר|גב['׳.]?|גברת|ה"ה|לכבוד)\s+/, "");
+  const isName = (s) => s.replace(/[^\p{L}]/gu, "").length >= 2 && !/^(?:מס|מספר|קוד|ח\.?פ|ת\.?ז|טלפון|כתובת)/.test(s);
+  for (const re of CUSTOMER_RES) {
+    for (const [i, line] of lines.slice(0, 40).entries()) {
+      const m = line.match(re);
+      if (!m) continue;
+      let name = pick(m[1]);
+      if (!isName(name) && lines[i + 1] && !NOT_A_NAME.test(lines[i + 1])) name = pick(lines[i + 1]);
+      if (isName(name)) return name;
+    }
   }
   return "";
 }
