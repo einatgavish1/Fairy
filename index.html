@@ -22,7 +22,8 @@
   </div>
   <div class="login-card">
     <button class="primary google" id="googleBtn">כניסה עם Google</button>
-    <form class="pw-form" id="pwForm">
+    <!-- Hidden while Email/Password sign-in is off in Firebase; Google only for now. -->
+    <form class="pw-form" id="pwForm" hidden>
       <p class="pw-title">או עם מייל וסיסמה</p>
       <input type="email" id="pwEmail" placeholder="מייל" autocomplete="username" dir="ltr" required>
       <input type="password" id="pwPass" placeholder="סיסמה" autocomplete="current-password" dir="ltr" required>
