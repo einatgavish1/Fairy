@@ -1,5 +1,5 @@
 import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=8";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=9";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
 
 const $ = (id) => document.getElementById(id);
@@ -728,9 +728,9 @@ async function processFile(file, path, batch) {
   if (hash) inFlight.set(hash, path);
 
   // Read; a file that can't be read is still saved, so it can be opened and filled in by hand.
-  let text = "", preview = "", failed = "";
+  let text = "", preview = "", hint = "", failed = "";
   try {
-    ({ text, preview } = await oneAtATime(() => readFile(file, status)));
+    ({ text, preview, hint = "" } = await oneAtATime(() => readFile(file, status)));
   } catch (e) {
     failed = e.message || "שגיאה בקריאה";
   }
@@ -740,7 +740,7 @@ async function processFile(file, path, batch) {
   } else {
     el.querySelector(".thumb").innerHTML = '<span class="soon">📄</span>';
   }
-  const found = failed ? {} : parseText(text);
+  const found = failed ? {} : parseText(text, hint);
   const rec = {
     client: clientFor(found.customer), customer: found.customer || "",
     date: found.date || "", supplier: found.supplier || "", supplierId: found.supplierId || "",

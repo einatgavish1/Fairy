@@ -176,8 +176,21 @@ async function readPdf(file, onProgress) {
     }
     return { text: parts.join("\n"), preview, ocr: true };
   }
+  // A supplier is often known only by its logo (Gett, say), which is a picture, not text. When the text
+  // doesn't tell the service, the top of the first page is read as a picture too, for the logo's words.
+  let hint = "";
+  if (!findCategory(text, "")) {
+    try {
+      const page = await renderPage(await pdf.getPage(1), 2200);
+      const top = document.createElement("canvas");
+      top.width = page.width;
+      top.height = Math.round(page.height * 0.3);
+      top.getContext("2d").drawImage(page, 0, 0);
+      hint = await ocr(top, (x) => onProgress(0.6 + 0.4 * x, "מזהה את הלוגו…"));
+    } catch { /* without the logo the details are still there */ }
+  }
   onProgress(1, "");
-  return { text, preview, ocr: false };
+  return { text, preview, ocr: false, hint };
 }
 
 async function renderPage(page, width) {
@@ -245,10 +258,27 @@ function pdfLines(items) {
     const x = it.transform[4], y = it.transform[5], h = it.height || Math.abs(it.transform[3]) || 8;
     let row = rows.find((r) => Math.abs(r.y - y) < Math.max(2, h * 0.5));
     if (!row) rows.push((row = { y, parts: [] }));
-    row.parts.push({ x, s: it.str });
+    row.parts.push({ x, w: it.width || 0, h, s: it.str });
   }
   rows.sort((a, b) => b.y - a.y);
   return rows.map((r) => r.parts);
+}
+
+// Puts a line's pieces together in reading order. Some PDFs (Gett receipts, for one) set every letter
+// as its own piece, so a space goes in only where there is a real gap between two pieces, not
+// between any two of them ("ג'יטי", not "ג ' י ט י").
+function joinParts(parts, rtl) {
+  const sorted = [...parts].sort((a, b) => (rtl ? b.x - a.x : a.x - b.x));
+  let out = "";
+  sorted.forEach((p, i) => {
+    const prev = sorted[i - 1];
+    if (prev) {
+      const gap = rtl ? prev.x - (p.x + p.w) : p.x - (prev.x + prev.w);
+      if (!p.w || !prev.w || gap > Math.min(p.h, prev.h) * 0.18) out += " ";
+    }
+    out += p.s;
+  });
+  return out.replace(/\s+/g, " ").trim();
 }
 
 const HEB = /[֐-׿]/;
@@ -261,13 +291,10 @@ const hits = (text) => KEYWORDS.reduce((n, k) => n + text.split(k).length - 1, 0
 // Some PDFs store Hebrew in visual order (letters backwards). Detect that by the keywords and fix it;
 // otherwise order every Hebrew line right to left.
 function fixVisualOrder(rows) {
-  const ltr = rows.map((parts) => [...parts].sort((a, b) => a.x - b.x).map((p) => p.s).join(" ").replace(/\s+/g, " ").trim());
+  const ltr = rows.map((parts) => joinParts(parts, false));
   const flipped = ltr.map((l) => (HEB.test(l) ? unflipLtr(reverse(l)) : l));
   if (hits(flipped.join("\n")) > hits(ltr.join("\n"))) return flipped;
-  return rows.map((parts) => {
-    const rtl = parts.some((p) => HEB.test(p.s));
-    return [...parts].sort((a, b) => (rtl ? b.x - a.x : a.x - b.x)).map((p) => p.s).join(" ").replace(/\s+/g, " ").trim();
-  });
+  return rows.map((parts) => joinParts(parts, parts.some((p) => HEB.test(p.s))));
 }
 
 // ---------- finding the details ----------
@@ -279,7 +306,7 @@ export const CATEGORIES = [
   ["גז", /אמישראגז|סופרגז|פזגז|גז\s*ביתי|צריכת\s*גז/],
   ["תקשורת", /בזק|פרטנר|סלקום|הוט\s*(?:מובייל|טלקום|נט)|HOT|גולן\s*טלקום|אינטרנט|סלולר|טלפוניה|תקשורת|קווי|yes\s/i],
   ["רכב ודלק", /תחנת\s*דלק|סונול|דור\s*אלון|(?:^|\s)פז(?:\s|$)|\bTEN\b|תדלוק|בנזין|סולר|מוסך|צמיגים|ליסינג|כביש\s*6|טסט\s*לרכב/i],
-  ["חניה ותחבורה", /חניה|חנייה|חניון|פנגו|סלופארק|רב[\s-]?קו|רכבת\s*ישראל|מונית|gett|uber/i],
+  ["חניה ותחבורה", /חניה|חנייה|חניון|פנגו|סלופארק|רב[\s-]?קו|רכבת\s*ישראל|מונית|מוניות|טאקסי|טקסי|נסיעה\s*מס|gett|uber|yango|יאנגו|דן\s*בדרום|אגד|מטרופולין|אפיקים|moovit|מוביט/i],
   ["ביטוח", /ביטוח|insurance/i],
   ["שכירות", /שכירות|שכ["״]ד|שכר\s*דירה|\brent\b/i],
   ["תוכנה ומנויים", /מנוי|subscription|google|microsoft|adobe|zoom|apple\.com|תוכנה|software|amazon\s*web|openai|anthropic|wix|canva/i],
@@ -333,7 +360,10 @@ function amountsIn(line) {
   const clean = line
     .replace(/(?<!\d)\d{1,2}\s?[./-]\s?\d{1,2}\s?[./-]\s?\d{2,4}(?!\d)/g, " ")
     .replace(/(?<!\d)0\d{1,2}-?\d{3}-?\d{4}(?!\d)|(?<!\d)05\d-?\d{7}(?!\d)/g, " ")
-    .replace(/\d+(?:\.\d+)?\s?%/g, " ");
+    .replace(/\d+(?:\.\d+)?\s?%/g, " ")
+    // a card's last digits ("Mastercard *5942", "כרטיס 1234") are not money
+    .replace(/\*+\s?\d{2,}/g, " ")
+    .replace(/(?:mastercard|visa|amex|diners|isracard|ויזה|מאסטרקארד|ישראכרט|אמריקן\s*אקספרס|דיינרס|כרטיס(?:\s*אשראי)?|card)\D{0,8}\d{4}(?!\d)/gi, " ");
   const out = [];
   for (const m of clean.matchAll(/-?(?<![\d.,])\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?(?![\d,])|-?(?<![\d.,])\d+(?:\.\d{1,2})?(?![\d.,]*\d)/g)) {
     const raw = m[0].replace(/,/g, "");
@@ -429,7 +459,11 @@ const CUSTOMER_RES = [
   /(?:שם\s*(?:ה)?לקוח|לקוח(?!ות)|שם\s*המזמין|מזמין|bill(?:ed)?\s*to|sold\s*to|customer(?:\s*name)?|client)\s*[:\-]?\s*(.*)$/i,
 ];
 function findCustomer(lines) {
-  const pick = (s) => cleanName(s.replace(/\s+(?:ת\.?\s?ז|ח\.?\s?פ|ע\.?\s?מ|טל|טלפון|מס['׳]|מספר)[.:'׳\s].*$/, "").replace(/\d{5,}.*$/, "")).replace(/^(?:מר|גב['׳.]?|גברת|ה"ה|לכבוד)\s+/, "");
+  // What sits beside the name on the same line (a date, "תאריך:", an ID or phone number) is not part of it.
+  const pick = (s) => cleanName(s
+    .replace(/\s+(?:ת\.?\s?ז|ח\.?\s?פ|ע\.?\s?מ|טל|טלפון|מס['׳]|מספר|תאריך|דוא["״']?ל|e-?mail)[.:'׳\s].*$/i, "")
+    .replace(/\s*\d{1,2}[./-]\d{1,2}[./-]\d{2,4}.*$/, "")
+    .replace(/\d{5,}.*$/, "")).replace(/^(?:מר|גב['׳.]?|גברת|ה"ה|לכבוד)\s+/, "");
   const isName = (s) => s.replace(/[^\p{L}]/gu, "").length >= 2 && !/^(?:מס|מספר|קוד|ח\.?פ|ת\.?ז|טלפון|כתובת)/.test(s);
   for (const re of CUSTOMER_RES) {
     for (const [i, line] of lines.slice(0, 40).entries()) {
@@ -490,7 +524,8 @@ function findDetails(lines) {
   return "";
 }
 
-export function parseText(text) {
+// hint: extra words that only help tell the service type (the logo's, read from the top of the page).
+export function parseText(text, hint = "") {
   text = text.replace(/[‎‏‪-‮⁦-⁩]/g, ""); // invisible direction marks from OCR
   const lines = text.split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
   const total = findTotal(lines);
@@ -507,7 +542,7 @@ export function parseText(text) {
     supplierId: text.match(ID_RE)?.[1] || "",
     docType,
     docNo: findDocNo(text),
-    category: findCategory(text, supplier),
+    category: findCategory(text, supplier) || findCategory(hint, supplier),
     details: findDetails(lines),
   };
 }
