@@ -1,5 +1,5 @@
 import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES } from "./extract.js?v=1";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES } from "./extract.js?v=2";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => (n < 0 ? "-" : "") + "₪" + Math.abs(n || 0).toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -213,34 +213,120 @@ function findDuplicate(r, exceptId) {
 
 // ---------- intake ----------
 
+// Files, whole folders (picked or dragged) and ZIP files; a ZIP may hold folders and other ZIPs.
 const drop = $("drop");
-$("fileInput").onchange = (e) => { addFiles(e.target.files); e.target.value = ""; };
+for (const id of ["fileInput", "folderInput"]) $(id).onchange = (e) => { addFiles([...e.target.files]); e.target.value = ""; };
+$("pickFiles").onclick = () => $("fileInput").click();
+$("pickFolder").onclick = () => $("folderInput").click();
 drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
 drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); addFiles(e.dataTransfer.files); });
+drop.addEventListener("drop", (e) => {
+  e.preventDefault();
+  drop.classList.remove("over");
+  // The entries must be taken now, while the drop event lasts; reading them can wait.
+  const entries = [...e.dataTransfer.items].map((it) => it.webkitGetAsEntry?.()).filter(Boolean);
+  if (entries.length) Promise.all(entries.map(readEntry)).then((lists) => addFiles(lists.flat()));
+  else addFiles([...e.dataTransfer.files]);
+});
 // Pasting a screenshot (Ctrl+V) works too.
 document.addEventListener("paste", (e) => {
   const files = [...(e.clipboardData?.files || [])];
   if (files.length && !$("appView").hidden) { showView("upload"); addFiles(files); }
 });
 
+// A dragged file or folder -> [{ file, path }].
+async function readEntry(entry) {
+  if (entry.isFile) {
+    const file = await new Promise((ok, bad) => entry.file(ok, bad));
+    return [{ file, path: entry.fullPath.replace(/^\//, "") }];
+  }
+  const reader = entry.createReader(), children = [];
+  // readEntries hands out the folder in chunks (about 100 at a time) until it returns none.
+  for (let chunk; (chunk = await new Promise((ok, bad) => reader.readEntries(ok, bad))).length;) children.push(...chunk);
+  return (await Promise.all(children.map(readEntry))).flat();
+}
+
+const DOC_EXT = /\.(pdf|jpe?g|png|webp|gif|bmp)$/i;
+const MIME = { pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", bmp: "image/bmp" };
+const MAX_FILES = 300, MAX_SIZE = 30 * 1024 * 1024;
+const isZip = (f) => /\.zip$/i.test(f.name) || /zip/.test(f.type);
+
+let jszipReady;
+function jszip() {
+  jszipReady ||= new Promise((ok, bad) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+    s.onload = () => ok(window.JSZip);
+    s.onerror = () => bad(new Error("לא הצלחתי לטעון את רכיב פריסת ה-ZIP"));
+    document.head.appendChild(s);
+  });
+  return jszipReady;
+}
+// ZIPs made by Windows without the UTF-8 flag keep Hebrew names in the old Hebrew code page.
+function zipName(bytes) {
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { return new TextDecoder("windows-1255").decode(bytes); }
+}
+
+async function unzip(file, path, out, skipped) {
+  const JSZip = await jszip();
+  const zip = await JSZip.loadAsync(file, { decodeFileName: zipName });
+  for (const entry of Object.values(zip.files)) {
+    const name = entry.name.split("/").pop();
+    if (entry.dir || !name || name.startsWith(".") || entry.name.startsWith("__MACOSX/")) continue;
+    if (out.length >= MAX_FILES) return;
+    const inner = `${path}/${entry.name}`;
+    if (!DOC_EXT.test(name) && !/\.zip$/i.test(name)) { skipped.push(inner); continue; }
+    const blob = await entry.async("blob");
+    if (blob.size > MAX_SIZE) { skipped.push(inner); continue; }
+    const ext = name.split(".").pop().toLowerCase();
+    await collect({ file: new File([blob], name, { type: MIME[ext] || (ext === "zip" ? "application/zip" : "") }), path: inner }, out, skipped);
+  }
+}
+
+async function collect({ file, path }, out, skipped) {
+  path ||= file.webkitRelativePath || file.name;
+  if (isZip(file)) {
+    try { await unzip(file, path.replace(/\.zip$/i, ""), out, skipped); }
+    catch { skipped.push(path); }
+  } else if ((/pdf|image/.test(file.type) || DOC_EXT.test(file.name)) && file.size <= MAX_SIZE) {
+    if (out.length < MAX_FILES) out.push({ file, path });
+  } else if (!file.name.startsWith(".")) {
+    skipped.push(path);
+  }
+}
+
 const pending = new Set();
 function syncSaveAll() { $("saveAllBtn").hidden = [...pending].filter((it) => it.ready).length < 2; }
 $("saveAllBtn").onclick = async () => { for (const it of [...pending]) if (it.ready) await it.save(); };
 
-function addFiles(list) {
-  for (const file of list) {
-    if (!/pdf|image/.test(file.type) && !/\.(pdf|jpe?g|png|webp|gif|bmp)$/i.test(file.name)) { toast(`${file.name}: אפשר רק PDF או תמונה`); continue; }
-    processFile(file);
-  }
+async function addFiles(list) {
+  const out = [], skipped = [];
+  for (const x of list) await collect(x instanceof File ? { file: x } : x, out, skipped);
+  if (out.length >= MAX_FILES) toast(`נקלטים ${MAX_FILES} המסמכים הראשונים. את השאר מעלים בפעם הבאה.`);
+  else if (out.length > 1 || skipped.length) toast(`נמצאו ${out.length} מסמכים${skipped.length ? `, ${skipped.length} קבצים אחרים דולגו (רק PDF ותמונות)` : ""}`);
+  // One block per upload, newest on top, its files in their own order.
+  const batch = document.createElement("div");
+  $("queue").prepend(batch);
+  for (const { file, path } of out) processFile(file, path, batch);
 }
 
-async function processFile(file) {
+// At most two files are read at a time, so a big folder doesn't choke the browser.
+let reading = 0;
+const waitingToRead = [];
+async function oneAtATime(fn) {
+  if (reading >= 2) await new Promise((ok) => waitingToRead.push(ok));
+  reading++;
+  try { return await fn(); }
+  finally { reading--; waitingToRead.shift()?.(); }
+}
+
+async function processFile(file, path, batch) {
   const el = document.createElement("div");
   el.className = "item";
-  el.innerHTML = `<div class="thumb"><span class="soon">⏳</span><span class="fname">${esc(file.name)}</span></div>
+  el.innerHTML = `<div class="thumb"><span class="soon">⏳</span><span class="fname">${esc(path)}</span></div>
     <div class="body"><div class="status"><span class="label">ממתין…</span><div class="bar"><i></i></div></div></div>`;
-  $("queue").prepend(el);
+  batch.append(el);
   const status = (p, label) => {
     el.querySelector(".bar i").style.width = Math.round(p * 100) + "%";
     if (label) el.querySelector(".label").textContent = label;
@@ -248,9 +334,9 @@ async function processFile(file) {
   const item = { ready: false };
   pending.add(item);
   try {
-    const { text, preview, ocr } = await readFile(file, status);
+    const { text, preview, ocr } = await oneAtATime(() => readFile(file, status));
     const thumb = el.querySelector(".thumb");
-    thumb.innerHTML = `${preview ? `<img src="${preview}" alt="">` : '<span class="soon">אין תצוגה</span>'}<span class="fname">${esc(file.name)}</span>`;
+    thumb.innerHTML = `${preview ? `<img src="${preview}" alt="">` : '<span class="soon">אין תצוגה</span>'}<span class="fname">${esc(path)}</span>`;
     thumb.onclick = () => preview && zoom(preview);
     const found = { client: $("defaultClient").value.trim(), ...parseText(text) };
     const missing = FIELDS.filter((f) => f.need && !found[f.k]).length;
@@ -273,7 +359,7 @@ async function processFile(file) {
       const btn = el.querySelector(".save");
       btn.disabled = true;
       try {
-        await store.add({ ...rec, fileName: file.name }, preview);
+        await store.add({ ...rec, fileName: path }, preview);
         pending.delete(item);
         item.ready = false;
         el.classList.add("saved");
@@ -290,7 +376,7 @@ async function processFile(file) {
     el.querySelector(".drop-it").onclick = () => { pending.delete(item); el.remove(); syncSaveAll(); };
   } catch (e) {
     pending.delete(item);
-    el.querySelector(".body").innerHTML = `<p class="err">לא הצלחתי לקרוא את ${esc(file.name)}: ${esc(e.message)}</p><button class="ghost drop-it">הסרה</button>`;
+    el.querySelector(".body").innerHTML = `<p class="err">לא הצלחתי לקרוא את ${esc(path)}: ${esc(e.message)}</p><button class="ghost drop-it">הסרה</button>`;
     el.querySelector(".drop-it").onclick = () => el.remove();
   }
   syncSaveAll();

@@ -306,10 +306,12 @@ export const DOC_TYPE_NAMES = ["חשבונית מס קבלה", "חשבונית �
 
 function findDocNo(text) {
   const res = [
-    /(?:חשבונית(?:\s*מס)?(?:\s*[/-]?\s*קבלה)?|קבלה|חשבון\s*עסקה|זיכוי)\s*(?:מס(?:פר|['׳.י])?|#)?\s*:?\s*([A-Z]{0,3}-?\d{3,12})(?![\d./])/i,
+    /(?:חשבונית(?:\s*מס)?(?:\s*[/-]?\s*קבלה)?|קבלה|חשבון\s*עסקה|זיכוי)\s*(?:מס(?:פר|['׳.י])?|#)?\s*:?\s*([A-Z]{0,3}-?\d{3,12})(?![\d./])/, // no /i: lowercase letters before the number are OCR noise
     /מס(?:פר|['׳.])\s*(?:חשבונית|מסמך|קבלה|אסמכתא)\s*:?\s*([A-Z]{0,3}-?\d{3,12})/i,
     /(?:invoice|receipt|document)\s*(?:no\.?|number|#)\s*:?\s*([A-Z]{0,4}-?\d{3,12})/i,
     /אסמכתא\s*:?\s*(\d{3,12})/,
+    // OCR often garbles the "מס׳" between the word and the number.
+    /(?:חשבונית|קבלה|זיכוי|חשבון\s*עסקה)[^\d\n]{0,12}?(\d{3,12})(?![\d./])/,
   ];
   for (const re of res) { const m = text.match(re); if (m) return m[1]; }
   return "";
@@ -366,6 +368,7 @@ function findDetails(lines) {
 }
 
 export function parseText(text) {
+  text = text.replace(/[‎‏‪-‮⁦-⁩]/g, ""); // invisible direction marks from OCR
   const lines = text.split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
   const total = findTotal(lines);
   const vat = findVat(lines, total);

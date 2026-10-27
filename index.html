@@ -7,7 +7,7 @@
 <title>Fairy · קליטת מסמכים</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&family=Orbitron:wght@800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=1">
+<link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
 
@@ -58,12 +58,17 @@
         <button class="primary" id="saveAllBtn" hidden>שמירת הכל</button>
       </div>
     </div>
-    <label class="drop" id="drop">
-      <input type="file" id="fileInput" accept="application/pdf,image/*" multiple hidden>
+    <div class="drop" id="drop">
+      <input type="file" id="fileInput" accept="application/pdf,image/*,.zip,application/zip" multiple hidden>
+      <input type="file" id="folderInput" webkitdirectory multiple hidden>
       <span class="drop-icon" aria-hidden="true">📄</span>
-      <b>גוררים לכאן חשבוניות וקבלות, או לוחצים לבחירה</b>
-      <span>PDF או תמונה (צילום מהטלפון, סריקה). אפשר כמה קבצים בבת אחת.</span>
-    </label>
+      <b>גוררים לכאן חשבוניות וקבלות, תיקייה שלמה או קובץ ZIP</b>
+      <span>PDF או תמונה (צילום מהטלפון, סריקה). קובץ ZIP נפרס אוטומטית.</span>
+      <div class="drop-btns">
+        <button type="button" class="primary" id="pickFiles">📄 בחירת קבצים / ZIP</button>
+        <button type="button" class="ghost" id="pickFolder">📁 בחירת תיקייה</button>
+      </div>
+    </div>
     <div id="queue"></div>
   </main>
 
@@ -153,6 +158,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=2"></script>
+<script type="module" src="app.js?v=3"></script>
 </body>
 </html>

@@ -47,7 +47,8 @@ button.link:hover { background: rgba(255, 255, 255, 0.12); }
   border: 2px dashed rgba(255, 255, 255, .35); border-radius: 14px; padding: 30px 16px; background: rgba(255, 255, 255, .05); transition: .2s; }
 .drop:hover, .drop.over { background: rgba(255, 211, 77, .1); border-color: var(--accent); }
 .drop-icon { font-size: 34px; }
-.drop span:last-child { color: var(--muted); font-size: 13px; }
+.drop > span:not(.drop-icon) { color: var(--muted); font-size: 13px; }
+.drop-btns { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 10px; }
 
 .item { display: grid; grid-template-columns: 220px 1fr; gap: 18px; margin-top: 16px; padding: 16px;
   background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); border-radius: 12px; }
