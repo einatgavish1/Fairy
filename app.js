@@ -52,6 +52,10 @@ if (CLOUD) {
     },
     watchClients: (cb, onErr) => fs.onSnapshot(fs.collection(db, "clients"), (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onErr),
     addClient: (name) => fs.addDoc(fs.collection(db, "clients"), { name, createdAt: fs.serverTimestamp(), createdBy: auth.currentUser.email }),
+    async removeClient(name) {
+      const snap = await fs.getDocs(fs.query(fs.collection(db, "clients"), fs.where("name", "==", name)));
+      for (const d of snap.docs) await fs.deleteDoc(d.ref);
+    },
     watchAccess: (cb) => fs.onSnapshot(fs.collection(db, "access"), (snap) => cb(snap.docs.map((d) => d.id))),
     addAccess: (email) => fs.setDoc(fs.doc(db, "access", email), { addedAt: fs.serverTimestamp(), addedBy: auth.currentUser.email }),
     removeAccess: (email) => fs.deleteDoc(fs.doc(db, "access", email)),
@@ -75,6 +79,10 @@ if (CLOUD) {
     watchClients(cb) { const f = () => cb(readJson(CKEY)); clientListeners.add(f); f(); return () => clientListeners.delete(f); },
     async addClient(name) {
       localStorage.setItem(CKEY, JSON.stringify([...readJson(CKEY), { id: Date.now().toString(36), name }]));
+      clientListeners.forEach((f) => f());
+    },
+    async removeClient(name) {
+      localStorage.setItem(CKEY, JSON.stringify(readJson(CKEY).filter((c) => c.name !== name)));
       clientListeners.forEach((f) => f());
     },
   };
@@ -228,6 +236,27 @@ $("addClientBtn").onclick = async () => {
   if (name) chooseClient(name);
 };
 
+// Deleting a client takes all their documents with them, for good: the name has to be typed to confirm.
+$("delClientBtn").onclick = async () => {
+  if (!client || client === ALL) return;
+  const name = client;
+  const docs = records.filter((r) => r.client === name);
+  const typed = prompt(`מחיקת הלקוח "${name}" ו-${docs.length} המסמכים שלו. אי אפשר לשחזר אחרי המחיקה.\n\nכדי לאשר, הקלידו את שם הלקוח:`);
+  if (typed === null) return;
+  if (typed.trim() !== name) { toast("השם לא תואם. הלקוח לא נמחק"); return; }
+  let failed = 0;
+  for (const [i, r] of docs.entries()) {
+    try { await store.remove(r.id); previewCache.delete(r.id); } catch { failed++; }
+    if (docs.length > 5 && i % 5 === 4) toast(`מוחק מסמכים… ${i + 1} מתוך ${docs.length}`);
+  }
+  if (failed) { toast(`${failed} מסמכים לא נמחקו, ולכן הלקוח נשאר. נסו שוב.`); return; }
+  try { await store.removeClient(name); }
+  catch (e) { toast("המסמכים נמחקו, אבל הלקוח עצמו לא: " + e.message); return; }
+  try { if (localStorage.getItem("fairy-last-client") === name) localStorage.removeItem("fairy-last-client"); } catch {}
+  toast(`הלקוח "${name}" נמחק עם ${docs.length} מסמכים`);
+  chooseClient(ALL);
+};
+
 function chooseClient(name) {
   client = name;
   try { localStorage.setItem("fairy-last-client", name); } catch {}
@@ -238,6 +267,7 @@ function chooseClient(name) {
   $("clientFixed").hidden = all;
   $("clientFixed").innerHTML = all ? "" : `המסמכים יישמרו ללקוח: <b>${esc(name || "ללא שיוך")}</b>`;
   $("clientFilter").hidden = $("sumClient").hidden = !all;
+  $("delClientBtn").hidden = all || !name;
   $("clientFilter").value = $("sumClient").value = "";
   $("clientView").hidden = true;
   $("appView").hidden = false;
@@ -752,7 +782,20 @@ function zoom(src) {
 // ---------- documents list ----------
 
 let sortDir = -1;
-["search", "clientFilter", "catFilter", "monthFilter", "reviewOnly"].forEach((id) => $(id).addEventListener("input", renderTable));
+["search", "clientFilter", "catFilter", "typeFilter", "monthFilter", "reviewOnly"].forEach((id) => $(id).addEventListener("input", renderTable));
+
+// The kind of file a document came from, by the extension of its file (an Excel row's file is the part before "›").
+const FILE_TYPES = {
+  pdf: { re: /\.pdf$/i, label: "PDF" },
+  excel: { re: /\.(xlsx|xlsm|xls|csv|ods)$/i, label: "אקסל" },
+  word: { re: /\.docx?$/i, label: "Word" },
+  image: { re: /\.(jpe?g|jfif|pjpeg|png|webp|gif|bmp|avif|heic|heif|tiff?)$/i, label: "תמונה" },
+};
+function fileType(r) {
+  const file = (r.fileName || "").split(" › ")[0];
+  return Object.keys(FILE_TYPES).find((k) => FILE_TYPES[k].re.test(file)) || "";
+}
+const typeTag = (r) => { const t = fileType(r); return t ? `<span class="ftype ft-${t}">${FILE_TYPES[t].label}</span> ` : ""; };
 document.querySelector("th.sort").onclick = () => { sortDir = -sortDir; renderTable(); };
 
 function fillSelect(sel, values, allLabel) {
@@ -801,8 +844,9 @@ function markDuplicates() {
 function filtered() {
   const q = $("search").value.trim().toLowerCase();
   const who = $("clientFilter").value, cat = $("catFilter").value, month = $("monthFilter").value, reviewOnly = $("reviewOnly").checked;
+  const type = $("typeFilter").value;
   return records.filter((r) => inScope(r) && (!reviewOnly || needsReview(r)) &&
-    (!who || r.client === who) && (!cat || r.category === cat) && (!month || (r.date || "").startsWith(month)) &&
+    (!who || r.client === who) && (!cat || r.category === cat) && (!month || (r.date || "").startsWith(month)) && (!type || fileType(r) === type) &&
     (!q || [r.supplier, r.supplierId, r.details, r.docNo, r.client, r.customer, r.category, r.fileName].some((v) => String(v || "").toLowerCase().includes(q))))
     .sort((a, b) => sortDir * (a.date || "").localeCompare(b.date || ""));
 }
@@ -827,7 +871,7 @@ function renderTable() {
     <td class="sel"><input type="checkbox" data-sel="${r.id}"${selected.has(r.id) ? " checked" : ""} aria-label="בחירה"></td>
     <td class="num">${showDate(r.date)}</td>
     <td>${esc(r.client) || '<span class="soon">ללא</span>'}</td>
-    <td>${statusTag(r)}${esc(r.supplier) || `<span class="soon">${esc(r.fileName)}</span>`}${r.details ? `<small>${esc(r.details)}</small>` : ""}</td>
+    <td>${typeTag(r)}${statusTag(r)}${esc(r.supplier) || `<span class="soon">${esc(r.fileName)}</span>`}${r.details ? `<small>${esc(r.details)}</small>` : ""}</td>
     <td>${r.category ? `<span class="tag">${esc(r.category)}</span>` : ""}</td>
     <td>${esc(r.docType)}${r.docNo ? `<small>מס׳ ${esc(r.docNo)}</small>` : ""}</td>
     <td class="num">${r.vat ? fmt(r.vat) : ""}</td>
@@ -934,7 +978,7 @@ async function showSide(id) {
       ${line("סכום", r.amount ? fmt(r.amount) : "")}${line("מע״מ", r.vat ? fmt(r.vat) : "")}${line("סוג שירות", esc(r.category))}
       ${line("מסמך", esc([r.docType, r.docNo && `מס׳ ${r.docNo}`].filter(Boolean).join(" ")))}${line("שם במסמך", esc(r.customer))}
     </div>
-    <p class="side-file ltr-path">${esc(r.fileName)}</p>`;
+    <p class="side-file">${typeTag(r)}<span class="ltr-path">${esc(r.fileName)}</span></p>`;
   $("sideImg").innerHTML = '<p class="soon">טוען את המסמך…</p>';
   const src = await previewOf(id);
   if (current !== id) return;

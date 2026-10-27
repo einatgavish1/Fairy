@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=8">
+<link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
 
@@ -62,6 +62,7 @@
       <span class="mode" id="modeNote" hidden>מצב מקומי: הנתונים נשמרים רק בדפדפן הזה</span>
       <button class="link" id="allDocsBtn">📚 כל המסמכים</button>
       <button class="link" id="addClientBtn">➕ לקוח חדש</button>
+      <button class="link danger-link" id="delClientBtn" hidden>🗑️ מחיקת הלקוח</button>
       <button class="link" id="shareBtn" hidden>👥 שיתוף</button>
       <button class="link" id="logoutBtn">↩️ יציאה</button>
     </div>
@@ -111,6 +112,13 @@
       <input type="search" id="search" placeholder="חיפוש ספק, פירוט, מספר מסמך, קובץ…">
       <select id="clientFilter"></select>
       <select id="catFilter"><option value="">כל סוגי השירות</option></select>
+      <select id="typeFilter">
+        <option value="">כל סוגי הקבצים</option>
+        <option value="pdf">PDF</option>
+        <option value="excel">אקסל / CSV</option>
+        <option value="image">תמונה</option>
+        <option value="word">Word</option>
+      </select>
       <input type="month" id="monthFilter" title="חודש">
     </div>
     <div class="bulk-bar" id="bulkBar" hidden>
@@ -210,6 +218,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=14"></script>
+<script type="module" src="app.js?v=15"></script>
 </body>
 </html>
