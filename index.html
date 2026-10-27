@@ -7,7 +7,7 @@
 <title>Fairy · קליטת מסמכים</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&family=Orbitron:wght@800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 
@@ -34,9 +34,22 @@
   </div>
 </section>
 
+<section id="clientView" class="client-view" hidden>
+  <div class="panel client-panel">
+    <div class="panel-head"><h2>✨ Fairy · בחירת לקוח</h2><span class="email" id="cvEmail"></span></div>
+    <input type="search" id="clientSearch" class="client-search" placeholder="חיפוש לקוח…" autocomplete="off">
+    <div class="client-grid" id="clientGrid"></div>
+    <form class="row new-client" id="newClientForm">
+      <input id="newClientName" placeholder="שם לקוח חדש" autocomplete="off">
+      <button class="primary">+ לקוח חדש</button>
+    </form>
+  </div>
+</section>
+
 <div class="layout" id="appView" hidden>
   <nav class="side-nav" id="sideNav" aria-label="תפריט ראשי">
     <div class="side-nav-title">✨ Fairy <small>קליטת מסמכים</small></div>
+    <div class="cur-client"><small>לקוח</small><b id="curClient"></b><button class="link" id="switchClient">🔄 החלפת לקוח</button></div>
     <button data-view="upload" class="active">📥 קליטת מסמכים</button>
     <button data-view="docs">📋 מסמכים שנקלטו</button>
     <button data-view="summary">📊 סיכום</button>
@@ -50,11 +63,14 @@
 
   <main class="panel view-panel view-active" data-view="upload">
     <div class="panel-head">
-      <h2>📥 קליטת מסמכים</h2>
+      <h2>📥 קליטת מסמכים <span class="page-client" id="pageClient"></span></h2>
       <div class="head-actions">
-        <label class="client-pick">לקוח
+        <label class="client-pick" id="clientPick">לקוח
           <input id="defaultClient" list="clientList" placeholder="שם הלקוח" autocomplete="off">
         </label>
+        <span class="client-fixed" id="clientFixed" hidden></span>
+        <label class="chk auto-save" title="מסמך שכל הפרטים שלו זוהו ואינו כפול נשמר מיד. השאר מחכים לבדיקה שלכם.">
+          <input type="checkbox" id="autoSave" checked> שמירה אוטומטית של מסמכים שזוהו במלואם</label>
         <button class="primary" id="saveAllBtn" hidden>שמירת הכל</button>
       </div>
     </div>
@@ -163,6 +179,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=8"></script>
+<script type="module" src="app.js?v=9"></script>
 </body>
 </html>

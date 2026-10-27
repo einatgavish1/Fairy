@@ -46,6 +46,16 @@ service cloud.firestore {
                             && request.resource.data.dataUrl.size() < 900000;
     }
 
+    // The client list, so a new client is there before their first document.
+    match /clients/{id} {
+      allow read: if allowed();
+      allow create: if allowed()
+                    && request.resource.data.keys().hasOnly(['name', 'createdAt', 'createdBy'])
+                    && request.resource.data.name is string
+                    && request.resource.data.name.size() > 0 && request.resource.data.name.size() < 100;
+      allow update, delete: if isOwner();
+    }
+
     match /access/{email} {
       allow read: if isOwner() || (signedIn() && request.auth.token.email == email);
       allow create, update: if isOwner()
