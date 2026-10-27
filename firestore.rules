@@ -58,6 +58,17 @@ service cloud.firestore {
       allow update, delete: if isOwner();
     }
 
+    // A client's filing report for one tax year: the comparative report's lines and the details around them.
+    match /reports/{id} {
+      allow read: if allowed();
+      allow create, update: if allowed()
+                            && request.resource.data.keys().hasOnly(['client', 'year', 'idNumber', 'fileNo', 'carPct', 'mealPct',
+                                                                     'source', 'fileName', 'lines', 'updatedAt', 'updatedBy'])
+                            && request.resource.data.client is string
+                            && request.resource.data.lines is list && request.resource.data.lines.size() < 1000;
+      allow delete: if isOwner();
+    }
+
     match /access/{email} {
       allow read: if isOwner() || (signedIn() && request.auth.token.email == email);
       allow create, update: if isOwner()

@@ -339,7 +339,8 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
   .cards { grid-template-columns: 1fr 1fr; }
   .card b { font-size: 19px; }
   .dlg-grid, .sum-grid { grid-template-columns: 1fr; }
-  th:nth-child(3), td:nth-child(3), th:nth-child(6), td:nth-child(6) { display: none; }
+  /* the documents list only: its client and document columns make room on a phone */
+  .docs-split th:nth-child(3), .docs-split td:nth-child(3), .docs-split th:nth-child(6), .docs-split td:nth-child(6) { display: none; }
 }
 
 /* ---- journal entries ---- */
@@ -350,3 +351,22 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .journal .acc-name { text-align: start; font-size: 13px; color: var(--muted); }
 .journal .acc.guessed { border-style: dashed; }
 .journal .acc-pick { max-width: 240px; padding: 4px 6px; border-radius: 8px; background: var(--field); color: var(--field-text); }
+
+/* ---- filing report: looks like the printed sheet ---- */
+.filing-meta { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 8px; }
+.filing-meta label { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); }
+.filing-meta input { width: 150px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--glass-line); background: var(--field); color: var(--field-text); }
+.filing-sheet { max-width: 640px; margin: 8px auto 16px; padding: 28px 32px; border-radius: 6px; background: #fff; color: #111;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .3); font-size: 15px; }
+.filing-sheet h3 { margin: 0 0 2px; text-align: center; font-size: 16px; }
+.filing-sheet .fs-title { padding-bottom: 6px; border-bottom: 1px solid #111; margin-bottom: 16px; }
+.filing-sheet table { width: 100%; border-collapse: collapse; }
+.filing-sheet th, .filing-sheet td { border: 0; padding: 3px 6px; color: #111; background: none; }
+.filing-sheet th { font-weight: 400; font-size: 13px; border-bottom: 1px solid #111; }
+.filing-sheet td:nth-child(1) { width: 58%; }
+.filing-sheet tr.b td { font-weight: 700; }
+.filing-sheet tr.gap td { padding-top: 14px; }
+.filing-sheet tr.line td:nth-child(3), .filing-sheet tr.under-b td:nth-child(2) { border-bottom: 1px solid #111; }
+.filing-sheet tr.total td:nth-child(3) { border-top: 1px solid #111; border-bottom: 3px double #111; }
+.filing-sheet tbody tr:hover { background: none; }
+.comp-box { margin-top: 10px; }

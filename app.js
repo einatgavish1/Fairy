@@ -2,6 +2,7 @@ import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
 import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=9";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
 import { EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=3";
+import { parseComparative, comparativeFromDocs, buildFiling, filingSheet, comparativeSheet, lineOf } from "./report.js?v=1";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => (n < 0 ? "-" : "") + "₪" + Math.abs(n || 0).toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -60,6 +61,9 @@ if (CLOUD) {
     watchAccess: (cb) => fs.onSnapshot(fs.collection(db, "access"), (snap) => cb(snap.docs.map((d) => d.id))),
     addAccess: (email) => fs.setDoc(fs.doc(db, "access", email), { addedAt: fs.serverTimestamp(), addedBy: auth.currentUser.email }),
     removeAccess: (email) => fs.deleteDoc(fs.doc(db, "access", email)),
+    // A client's filing report for a year: reports/{id}, the comparative lines and the details around them.
+    async getReport(id) { return (await fs.getDoc(fs.doc(db, "reports", id))).data() || null; },
+    saveReport: (id, data) => fs.setDoc(fs.doc(db, "reports", id), { ...data, updatedAt: fs.serverTimestamp(), updatedBy: auth.currentUser.email }),
   };
 } else {
   const KEY = "fairy-docs", PKEY = "fairy-preview-", CKEY = "fairy-clients";
@@ -86,6 +90,8 @@ if (CLOUD) {
       localStorage.setItem(CKEY, JSON.stringify(readJson(CKEY).filter((c) => c.name !== name)));
       clientListeners.forEach((f) => f());
     },
+    async getReport(id) { try { return JSON.parse(localStorage.getItem("fairy-report-" + id)); } catch { return null; } },
+    async saveReport(id, data) { localStorage.setItem("fairy-report-" + id, JSON.stringify(data)); },
   };
 }
 
@@ -317,7 +323,8 @@ function chooseClient(name) {
   try { localStorage.setItem("fairy-last-client", name); } catch {}
   const all = name === ALL;
   const title = all ? "" : `· ${name || "לא שויכו ללקוח"}`;
-  $("pageClient").textContent = $("pageClient2").textContent = $("pageClient3").textContent = $("pageClient4").textContent = title;
+  for (const id of ["pageClient", "pageClient2", "pageClient3", "pageClient4", "pageClient5"]) $(id).textContent = title;
+  loadFiling();
   $("clientPick").hidden = !all;
   $("clientFixed").hidden = all;
   $("clientFixed").innerHTML = all ? "" : `המסמכים יישמרו ללקוח: <b>${esc(name || "ללא שיוך")}</b>`;
@@ -1233,6 +1240,152 @@ $("jExport").onclick = () => {
   XLSX.utils.book_append_sheet(wb, ws, "פקודות יומן");
   const who = client && client !== ALL ? `${client} ` : "";
   XLSX.writeFile(wb, `פקודות יומן ${who}${$("jYear").value || "כל השנים"}.xlsx`);
+};
+
+// ---------- filing report (דוח להגשה) ----------
+// For one client and tax year: the comparative report (imported from the bookkeeping software's Excel,
+// or put together from the documents here), and the filing report it adds up to. Saved per client and
+// year with the client's ID and file number and the adjustment rates, so it opens as it was left.
+
+let filing = null; // { client, year, idNumber, fileNo, carPct, mealPct, source, fileName, lines }
+const reportId = (name, year) => `${name}__${year}`.replace(/[\/\s]+/g, "_");
+const thisYear = new Date().getFullYear();
+
+function filingYears() {
+  const ys = new Set(records.filter(inScope).map((r) => +(r.date || "").slice(0, 4)).filter(Boolean));
+  ys.add(thisYear - 1);
+  if (filing?.year) ys.add(+filing.year);
+  return [...ys].sort((a, b) => b - a);
+}
+
+async function loadFiling(year) {
+  if (!client || client === ALL) { filing = null; renderFiling(); return; }
+  year = +(year || $("fYear").value || thisYear - 1);
+  const saved = await store.getReport(reportId(client, year)).catch(() => null);
+  // A new year starts with the client's ID, file number and rates from last year's report.
+  const last = saved ? null : await store.getReport(reportId(client, year - 1)).catch(() => null);
+  filing = saved || { client, year, idNumber: last?.idNumber || "", fileNo: last?.fileNo || "", carPct: last?.carPct ?? 55,
+    mealPct: last?.mealPct ?? 20, source: "", fileName: "", lines: [] };
+  renderFiling();
+}
+
+async function saveFiling(note) {
+  if (!filing) return;
+  try {
+    await store.saveReport(reportId(filing.client, filing.year), { ...filing, year: +filing.year });
+    if (note) toast(note);
+  } catch (e) { toast("השמירה נכשלה: " + e.message); }
+}
+
+function renderFiling() {
+  const years = filingYears();
+  const want = filing?.year || +$("fYear").value || thisYear - 1;
+  $("fYear").innerHTML = years.map((y) => `<option${y === +want ? " selected" : ""}>${y}</option>`).join("");
+  const none = !client || client === ALL;
+  $("filingNeedClient").hidden = !none;
+  $("filingMain").hidden = none;
+  if (none || !filing) return;
+  $("fId").value = filing.idNumber || "";
+  $("fFileNo").value = filing.fileNo || "";
+  $("fCar").value = filing.carPct;
+  $("fMeal").value = filing.mealPct;
+  $("fSource").textContent = !filing.lines.length ? "עוד אין דוח השוואתי לשנה הזו. מייבאים אותו מאקסל, או מחשבים מהמסמכים במערכת."
+    : filing.source === "file" ? `נבנה מהקובץ: ${filing.fileName}` : "נבנה מהמסמכים במערכת";
+  $("filingBody").innerHTML = filing.lines.length ? filingHtml() : "";
+  $("compBox").hidden = !filing.lines.length;
+  $("compBody").innerHTML = comparativeHtml();
+}
+
+const shekel = (n) => (n ? Math.round(n).toLocaleString("he-IL") : "-");
+const signed = (n) => (n < 0 ? `(${Math.round(-n).toLocaleString("he-IL")})` : Math.round(n).toLocaleString("he-IL"));
+
+// The filing report on screen as it looks in the workbook: the labels, the lines in the middle column,
+// the totals in the last one.
+function filingHtml() {
+  const f = buildFiling(filing.lines, filing);
+  const row = (label, b = "", d = "", cls = "") => `<tr class="${cls}"><td>${esc(label)}</td><td class="num">${b}</td><td class="num">${d}</td></tr>`;
+  const y = filing.year;
+  return `<div class="filing-sheet">
+    <h3>${esc(filing.client)}   - תעודת זהות ${esc(filing.idNumber || "")}</h3>
+    <h3>תיק מספר ${esc(filing.fileNo || "")}</h3>
+    <h3 class="fs-title">דוח הכנסות והוצאות לשנת המס ${y}</h3>
+    <table>
+      <thead><tr><th></th><th class="num">שקלים חדשים</th><th class="num">שקלים חדשים</th></tr></thead>
+      <tbody>
+        ${row("הכנסות", "", shekel(f.income), "b line")}
+        ${f.stock ? row("שינויים במלאי", shekel(f.stock)) : ""}
+        ${row("קניות אחרות", shekel(f.purchases), "", "under-b")}
+        ${row("עלות ההכנסות", "", shekel(f.cost), "b line")}
+        ${row("רווח גולמי", "", shekel(f.gross), "b")}
+        ${row("הוצאות  מכירה הנהלה וכלליות", "", "", "b gap")}
+        ${f.expenses.map(([l, v], i) => row(l, shekel(v), "", i === f.expenses.length - 1 ? "under-b" : "")).join("")}
+        ${row(" הוצאות מכירה הנהלה וכלליות", "", shekel(f.expenseTotal), "b line")}
+        ${row(f.result < 0 ? "הפסד לשנה" : "רווח לשנה", "", signed(f.result), "b")}
+        ${row("תאומים ", "", "", "b gap")}
+        ${row(`הוצאות רכב (${filing.carPct}%)`, shekel(f.carAdj), "", "under-b")}
+        ${row(`כיבודים (${filing.mealPct}%)`, shekel(f.mealAdj), "", "under-b")}
+        ${row("", "", shekel(f.adjTotal), "line")}
+        ${row(f.final < 0 ? `הפסד מעסק לשנת ${y} מקוזז מהכנסה משכר` : `רווח מעסק לשנת ${y}`, "", signed(f.final), "b total")}
+      </tbody>
+    </table></div>`;
+}
+
+// The comparative report it came from, each account with the filing line it went into.
+function comparativeHtml() {
+  if (!filing?.lines.length) return "";
+  const money = (n) => (n || 0).toLocaleString("he-IL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `<div class="tablewrap"><table>
+    <thead><tr><th>סעיף רווח והפסד</th><th>חשבון</th><th>תאור חשבון</th><th class="num">סכום השנה</th><th class="num">סכום בשנה שעברה</th><th>שורה בדוח להגשה</th></tr></thead>
+    <tbody>${filing.lines.map((l) => `<tr><td>${esc(l.section)}</td><td class="num">${esc(l.code)}</td><td>${esc(l.name)}</td>
+      <td class="num">${money(l.cur)}</td><td class="num">${money(l.prev)}</td><td><span class="tag">${esc(lineOf(l.code))}</span></td></tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+$("fYear").addEventListener("input", () => loadFiling($("fYear").value));
+for (const [id, key, isNum] of [["fId", "idNumber"], ["fFileNo", "fileNo"], ["fCar", "carPct", true], ["fMeal", "mealPct", true]]) {
+  $(id).addEventListener("change", () => {
+    if (!filing) return;
+    filing[key] = isNum ? +$(id).value || 0 : $(id).value.trim();
+    renderFiling();
+    saveFiling("נשמר");
+  });
+}
+
+$("fImport").onclick = () => $("fFile").click();
+$("fFile").onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file || !filing) return;
+  let parsed = null;
+  try { parsed = parseComparative(await readWorkbook(file)); } catch {}
+  if (!parsed) { toast("לא נמצא בקובץ דוח השוואתי (טבלה עם העמודות חשבון וסכום השנה)"); return; }
+  if (parsed.year && +parsed.year !== +filing.year
+      && !confirm(`הדוח בקובץ הוא לשנת ${parsed.year}, והשנה שנבחרה היא ${filing.year}. לשמור אותו לשנת ${parsed.year}?`)) return;
+  const year = +(parsed.year || filing.year);
+  const keep = { idNumber: filing.idNumber, fileNo: filing.fileNo, carPct: filing.carPct, mealPct: filing.mealPct };
+  filing = { client, year, ...keep, source: "file", fileName: file.name, lines: parsed.lines };
+  await saveFiling(`נקלט דוח השוואתי עם ${parsed.lines.length} חשבונות`);
+  renderFiling();
+};
+
+$("fFromDocs").onclick = async () => {
+  if (!filing) return;
+  if (filing.lines.length && filing.source === "file"
+      && !confirm("לשנה הזו כבר יש דוח השוואתי מקובץ. להחליף אותו בחישוב מהמסמכים במערכת?")) return;
+  const lines = comparativeFromDocs(records.filter(inScope), +filing.year, accountOf, accountName);
+  if (!lines.length) { toast(`אין מסמכים לשנת ${filing.year}`); return; }
+  filing = { ...filing, source: "docs", fileName: "", lines };
+  await saveFiling(`חושב מ-${lines.length} חשבונות של המסמכים`);
+  renderFiling();
+};
+
+$("fExport").onclick = () => {
+  if (!filing?.lines.length) { toast("אין עדיין דוח לייצא"); return; }
+  const wb = XLSX.utils.book_new();
+  wb.Workbook = { Views: [{ RTL: true }] };
+  XLSX.utils.book_append_sheet(wb, filingSheet({ ...filing, f: buildFiling(filing.lines, filing) }), "דוח להגשה");
+  XLSX.utils.book_append_sheet(wb, comparativeSheet(filing), "דוח השוואתי");
+  XLSX.writeFile(wb, `${filing.client} דוח מס ${filing.year}.xlsx`);
 };
 
 // ---------- summary ----------

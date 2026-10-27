@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=16">
+<link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
 
@@ -70,6 +70,7 @@
     <button data-view="upload" class="active">📥 קליטת מסמכים</button>
     <button data-view="docs">📋 מסמכים <span class="nav-badge" id="reviewBadge" hidden></span></button>
     <button data-view="journal">📒 פקודות יומן</button>
+    <button data-view="filing">📄 דוח להגשה</button>
     <button data-view="summary">📊 סיכום</button>
     <div class="side-nav-foot">
       <span class="email" id="userEmail"></span>
@@ -199,6 +200,32 @@
     </div>
   </main>
 
+  <!-- The filing report, built from the comparative report (imported from Excel or put together from the documents). -->
+  <main class="panel view-panel" data-view="filing">
+    <div class="panel-head">
+      <h2>📄 דוח להגשה <span class="page-client" id="pageClient5"></span></h2>
+      <div class="head-actions">
+        <select id="fYear" title="שנת המס"></select>
+        <button class="ghost" id="fImport">📥 ייבוא דוח השוואתי (אקסל)</button>
+        <input type="file" id="fFile" accept=".xlsx,.xls,.xlsm,.csv" hidden>
+        <button class="ghost" id="fFromDocs">🧮 חישוב מהמסמכים במערכת</button>
+        <button class="primary" id="fExport">ייצוא לאקסל</button>
+      </div>
+    </div>
+    <p class="soon" id="filingNeedClient" hidden>בחרו לקוח ברשימה שבתפריט הצד כדי לראות את הדוח שלו.</p>
+    <div id="filingMain">
+      <div class="filing-meta">
+        <label>תעודת זהות / ח.פ <input id="fId" inputmode="numeric" dir="ltr"></label>
+        <label>תיק מספר <input id="fFileNo" dir="ltr"></label>
+        <label>תאום הוצאות רכב (%) <input id="fCar" type="number" min="0" max="100" step="1" dir="ltr"></label>
+        <label>תאום כיבודים (%) <input id="fMeal" type="number" min="0" max="100" step="1" dir="ltr"></label>
+      </div>
+      <p class="hint" id="fSource"></p>
+      <div id="filingBody"></div>
+      <details class="raw comp-box" id="compBox" hidden><summary>הדוח ההשוואתי שממנו נבנה הדוח</summary><div id="compBody"></div></details>
+    </div>
+  </main>
+
   <main class="panel view-panel" data-view="summary">
     <div class="panel-head">
       <h2>📊 סיכום <span class="page-client" id="pageClient3"></span></h2>
@@ -252,6 +279,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=21"></script>
+<script type="module" src="app.js?v=22"></script>
 </body>
 </html>
