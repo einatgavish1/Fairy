@@ -108,25 +108,55 @@ export const ACCOUNTS = [
 export const OWNER_ACCOUNT = "107000";
 const NAMES = new Map(ACCOUNTS);
 export const accountName = (code) => NAMES.get(String(code)) || "";
-export const isIncome = (code) => /^4/.test(String(code));
-export const isExpense = (code) => /^[56]/.test(String(code));
+// Every document is an expense: an expense account (5, 6) or a fixed asset bought (15...).
+export const EXPENSE_ACCOUNTS = ACCOUNTS.filter(([c]) => /^(?:15[0-9]|5|6)/.test(c) && !/פחת נצבר/.test(NAMES.get(c)));
 
-// The account a document most likely belongs to, from its service type and what it says. A choice made
-// by hand (record.account) always wins over this.
-const BY_WORDS = [
+// The account by the kind of item bought, as the document describes it. More specific rules come
+// first: repairing a computer is not buying one, fuel for a car is not buying one.
+const BY_ITEM = [
+  [/תיקון\s*(?:ה)?מחשב|אוזני(?:י)?ות|עכבר|מקלדת|מטען|כבל|דיסק|זיכרון|כונן|רמקול|מצלמת\s*רשת/, "614004"],
+  [/דלק|בנזין|סולר|תדלוק|דור\s*אלון|סונול|(?:^|\s)פז(?:\s|$)/, "618004"],
   [/חניה|חנייה|חניון|פנגו|סלופארק/, "618006"],
-  [/כביש\s*6|נתיב\s*מהיר|אגרה/, "618005"],
-  [/מוסך|צמיגים|טיפול\s*(?:ב)?רכב|פחחות/, "618003"],
-  [/רישוי|טסט|אגרת\s*רכב/, "618001"],
-  [/ביטוח\s*רכב|ביטוח\s*חובה|ביטוח\s*מקיף/, "618002"],
-  [/רואה\s*חשבון|רואי\s*חשבון|הנהלת\s*חשבונות/, "615001"],
-  [/עו["״]ד|עורך\s*דין|עורכי\s*דין/, "615003"],
-  [/סלולר|פלאפון|נייד|פרטנר|סלקום|הוט\s*מובייל|גולן\s*טלקום|019\s*מובייל|רמי\s*לוי\s*תקשורת/, "614002"],
-  [/אינטרנט|סיבים|bezeq\s*int|ספק\s*גישה/i, "614003"],
-  [/ספר|ספרות|סטימצקי|צומת\s*ספרים/, "616002"],
+  [/כביש\s*6|נתיב\s*(?:ה)?מהיר|מנהרות\s*הכרמל|אגרת\s*כביש/, "618005"],
+  [/מוסך|טיפול\s*(?:ב)?רכב|תיקון\s*(?:ה)?רכב|טיפול\s*\d+|צמיג|פנצ'?ר|פחחות|מצבר/, "618003"],
+  [/רישוי|טסט|אגרת\s*רכב|רישיון\s*רכב/, "618001"],
+  [/ביטוח\s*(?:ה)?רכב|ביטוח\s*חובה|ביטוח\s*מקיף|ביטוח\s*צד\s*ג/, "618002"],
+  [/רכישת\s*רכב|יונדאי|טויוטה|קיה|מאזדה|סקודה|שברולט|רנו|פיג'?ו|סוזוקי|ניסאן|יונדיי/, "152000"],
+  [/מחשב|לפטופ|laptop|מק\s*בוק|macbook|טאבלט|אייפד|ipad|טלפון\s*נייד|סמארטפון|אייפון|iphone|גלקסי|galaxy|סמסונג|מדפסת|מסך|מקרן/i, "154000"],
+  // cleaning or mending something is upkeep, even when the thing is furniture ("ניקוי ספה")
+  [/ניקוי|ניקיון|תיקון|הדברה/, "613002"],
+  [/ספה|כורסה|כיסא|כסא|שולחן|ארון|מדף|ריהוט|רהיט|שידה|מזרן/, "156000"],
+  [/צעצוע|משחק|פאזל|בובה|ערכה\s*טיפולית|קלפים|יצירה|צבעי\s*(?:ידיים|גואש)/, "502000"],
+  [/שכירות|שכ["״']?ד|שכר\s*דירה|קליניקה|חדר\s*טיפול/, "612000"],
+  [/חשמל/, "613003"],
+  [/מים\s*וביוב|צריכת\s*מים|תאגיד\s*(?:ה)?מים|(?:^|\s)מים(?:\s|$)/, "613004"],
+  [/ארנונה|עיריית|עירית|מועצה\s*(?:מקומית|אזורית)/, "613005"],
+  [/(?:^|\s)גז(?:\s|$)|אמישראגז|סופרגז|פזגז/, "613006"],
+  [/נייר|עט(?:ים)?(?:\s|$)|קלסר|מעטפ|כלי\s*כתיבה|ציוד\s*משרדי|טונר|דיו|מחברת|הדפסה|צילום\s*מסמכים/, "613001"],
+  [/תיקון|ניקוי|ניקיון|אינסטלציה|צבע|נורה|פרחים|עציץ|שתילים|תמונה|מסגרת|איקאה|ikea|ציוד/i, "613002"],
+  [/סלולר|פלאפון|חבילת\s*גלישה|פרטנר|סלקום|הוט\s*מובייל|גולן\s*טלקום|019|012\s*מובייל/, "614002"],
+  [/אינטרנט|סיבים|ספק\s*גישה|נתב|ראוטר/, "614003"],
+  [/טלפון|קו\s*קווי|בזק/, "614001"],
+  [/תוכנה|תוכנות|מנוי|רישיון\s*(?:ל)?שימוש|license|zoom|זום|google\s*workspace|microsoft|office\s*365|מורנינג|morning|חשבונית\s*ירוקה|icount|canva|adobe|dropbox|אחסון\s*ענן/i, "614005"],
+  [/רואה\s*חשבון|רואת\s*חשבון|רואי\s*חשבון|הנהלת\s*חשבונות|שכ["״']?ט\s*רו["״']?ח/, "615001"],
+  [/עו["״']?ד|עורך\s*דין|עורכת\s*דין|עורכי\s*דין/, "615003"],
+  // a fee for the yearly report is the accountant's ("שכט עינת דוח 24")
+  [/שכ["״']?ט|שכר\s*טרחה|דוח\s*שנתי/, "615001"],
+  [/ייעוץ|יעוץ|יועץ|יועצת|consult/i, "615002"],
+  [/ספר|ספרים|ספרות|כתב\s*עת|סטימצקי|צומת\s*ספרים/, "616002"],
+  [/הדרכה|השתלמות|קורס|סדנה|סדנא|כנס|הרצאה|סופרוויזיה|הכשרה|לימודים|שכר\s*לימוד|webinar|וובינר/i, "616001"],
+  [/נסיעה|מונית|מוניות|טקסי|טאקסי|gett|yango|uber|רכבת|אוטובוס|רב[\s-]?קו|תחבורה\s*ציבורית/i, "619002"],
+  [/ביטוח/, "619001"],
+  [/מתנה|מתנות|שי\s*ל/, "619009"],
+  [/כיבוד|קפה|עוגה|עוגיות|מאפה|ארוחה|מסעדה|פיצה|שתייה/, "619010"],
+  [/עמלת\s*כרטיס|עמלת\s*סליקה/, "624000"],
+  [/עמלה|עמלות\s*בנק|דמי\s*ניהול\s*חשבון/, "623000"],
   [/גוגל|google\s*ads/i, "601001"],
-  [/פייסבוק|facebook|meta/i, "601002"],
+  [/פייסבוק|facebook|אינסטגרם|instagram|meta/i, "601002"],
+  [/אתר\s*אינטרנט|בניית\s*אתר|דומיין|אחסון\s*אתר/, "601100"],
+  [/פרסום|מודעה|שיווק|קמפיין|דפוס\s*פלאיירים/, "601000"],
 ];
+// Only when nothing on the document names the item: by its service type.
 const BY_CATEGORY = {
   "חשמל": "613003", "מים": "613004", "ארנונה": "613005", "גז": "613006",
   "תקשורת": "614001", "רכב ודלק": "618004", "חניה ותחבורה": "619002",
@@ -136,10 +166,15 @@ const BY_CATEGORY = {
   "אחזקה ותיקונים": "613002", "נסיעות ולינה": "630000", "בריאות": "630000",
   "חינוך והשתלמויות": "616001", "אחר": "630000",
 };
-export function suggestAccount(r) {
-  // Only what the document itself says: the service type's own name ("חניה ותחבורה") would match "חניה".
-  const text = [r.supplier, r.details].filter(Boolean).join(" ");
-  for (const [re, code] of BY_WORDS) if (re.test(text)) return code;
+
+// The account a document most likely belongs to: first by the item as the document describes it
+// (its details line, then the rest of its text), then by the supplier, and last by the service type.
+// The service type's own name is left out of the words ("חניה ותחבורה" is not a parking item).
+export function suggestAccount(r, text = "") {
+  for (const words of [r.details, text, r.supplier]) {
+    if (!words) continue;
+    for (const [re, code] of BY_ITEM) if (re.test(words)) return code;
+  }
   return BY_CATEGORY[r.category] || "630000";
 }
 export const accountOf = (r) => r.account || suggestAccount(r);

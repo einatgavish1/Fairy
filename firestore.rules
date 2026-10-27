@@ -25,7 +25,7 @@ service cloud.firestore {
     function validDoc() {
       let d = request.resource.data;
       return d.keys().hasOnly(['client', 'date', 'supplier', 'supplierId', 'category', 'docType', 'docNo', 'details',
-                               'amount', 'vat', 'fileName', 'fileHash', 'customer', 'status', 'reviewWhy', 'account', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
+                               'amount', 'vat', 'fileName', 'fileHash', 'customer', 'status', 'reviewWhy', 'account', 'accountBy', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
           && (d.amount == null || d.amount is number)
           && (d.vat == null || d.vat is number)
           && d.date is string && d.supplier is string && d.details is string

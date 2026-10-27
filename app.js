@@ -1,7 +1,7 @@
 import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
 import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=9";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
-import { ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, isIncome } from "./accounts.js?v=2";
+import { EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=3";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => (n < 0 ? "-" : "") + "₪" + Math.abs(n || 0).toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -350,7 +350,7 @@ const FIELDS = [
   { k: "docNo", label: "מספר מסמך" },
   { k: "amount", label: "סכום כולל מע״מ (₪)", type: "number", need: true },
   { k: "vat", label: "מע״מ (₪)", type: "number" },
-  { k: "account", label: "חשבון (פקודות יומן)", options: () => ACCOUNTS.filter(([c]) => /^[4-6]|^15/.test(c)).map(([c, n]) => [c, `${c} · ${n}`]) },
+  { k: "account", label: "חשבון חובה (פקודות יומן)", options: () => EXPENSE_ACCOUNTS.map(([c, n]) => [c, `${c} · ${n}`]) },
   { k: "details", label: "פירוט", wide: true },
 ];
 
@@ -752,6 +752,9 @@ async function processFile(file, path, batch) {
     fileName: path, fileHash: hash,
   };
   if (!rec.category) rec.category = learnedCategory(rec);
+  // The journal account by the kind of item, read from the whole document while its text is at hand.
+  rec.account = suggestAccount(rec, text);
+  rec.accountBy = "auto";
   const why = reviewReasons(rec, { noText: !failed && !text.trim(), failed });
   rec.status = failed ? "failed" : why.length ? "review" : "ok";
   rec.reviewWhy = why.join(" · ");
@@ -800,6 +803,8 @@ async function processSheet(file, path, batch) {
       fileName: `${path} › ${row.ref}`, fileHash: rowHash,
     };
     if (!rec.category) rec.category = learnedCategory(rec);
+    rec.account = suggestAccount(rec);
+    rec.accountBy = "auto";
     const why = reviewReasons(rec);
     rec.status = why.length ? "review" : "ok";
     rec.reviewWhy = why.join(" · ");
@@ -1092,6 +1097,9 @@ async function openEntry(id, fallback) {
 // "שמירה" keeps whatever is still wrong marked for review; "שמירה ואישור" says the person checked it.
 async function saveEntry(approve) {
   const rec = readFields($("dlgFields"));
+  // A journal account different from the one it had was picked by hand.
+  const before = records.find((x) => x.id === editing);
+  rec.accountBy = before && rec.account === accountOf(before) ? before.accountBy || "auto" : "hand";
   const why = approve ? [] : reviewReasons(rec, { exceptId: editing });
   rec.status = why.length ? "review" : "ok";
   rec.reviewWhy = why.join(" · ");
@@ -1127,57 +1135,50 @@ $("exportBtn").onclick = () => {
 
 // ---------- journal entries (פקודות יומן) ----------
 // Each document as one line, in the layout of the bookkeeping software's import (as in the tax-report
-// workbook): four dates, supplier / details (24 characters at most), debit, credit, amount, reference.
-// An expense debits its account and credits the owner's account (107000); income the other way round.
-// Income lines come first, then expenses, each by date.
+// workbook): four dates, supplier / details (24 characters at most), debit, credit, amount, reference,
+// and the debit account's name. Every document is an expense: it debits its account and credits the
+// owner's account (107000). The clients are exempt dealers, so the amount is the full amount paid.
 
-// "2024-01-01" -> "01-01-24", as the dates are shown in the workbook.
-const jDate = (iso) => (iso ? `${iso.slice(8, 10)}-${iso.slice(5, 7)}-${iso.slice(2, 4)}` : "");
+// "2024-01-06" -> "06/01/24": day, month and year apart by slashes.
+const jDate = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(2, 4)}` : "");
 // The balance date (the fourth): a document from before the year counts from its first day.
 const balanceDate = (iso, year) => (iso && year && iso < `${year}-01-01` ? `${year}-01-01` : iso);
 
 function journalLines() {
   const year = $("jYear").value;
-  const lines = records.filter((r) => inScope(r) && (!year || (r.date || "").startsWith(year)))
-    .map((r) => {
-      const account = accountOf(r);
-      const income = isIncome(account);
-      return {
-        r, account, income, date: r.date || "", balance: balanceDate(r.date || "", year),
-        details: (r.supplier || r.details || r.fileName || "").replace(/\s+/g, " ").trim().slice(0, 24),
-        debit: income ? OWNER_ACCOUNT : account, credit: income ? account : OWNER_ACCOUNT,
-        amount: r.amount || 0, ref: r.docNo || "",
-      };
-    });
-  const byDate = (a, b) => a.date.localeCompare(b.date);
-  return { income: lines.filter((l) => l.income).sort(byDate), expenses: lines.filter((l) => !l.income).sort(byDate) };
+  return records.filter((r) => inScope(r) && (!year || (r.date || "").startsWith(year)))
+    .map((r) => ({
+      r, date: r.date || "", balance: balanceDate(r.date || "", year),
+      details: (r.supplier || r.details || r.fileName || "").replace(/\s+/g, " ").trim().slice(0, 24),
+      debit: accountOf(r), credit: OWNER_ACCOUNT, amount: r.amount || 0, ref: r.docNo || "",
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-const accountCell = (l) => {
-  const code = l.income ? l.credit : l.debit;
-  return `<button type="button" class="acc${l.r.account ? "" : " guessed"}" data-acc="${l.r.id}" title="${esc(accountName(code))}${l.r.account ? "" : " (נקבע לפי סוג השירות)"}">${code}<small>${esc(accountName(code))}</small></button>`;
-};
+// The debit account and its name can both be clicked to change it; one picked by hand has a solid frame,
+// one set from the document a dashed one.
+const byHand = (r) => r.accountBy === "hand";
+const pickable = (l, inner, cls) => `<button type="button" class="acc ${cls}${byHand(l.r) ? "" : " guessed"}" data-acc="${l.r.id}" title="${byHand(l.r) ? "נבחר ביד" : "נקבע לפי סוג הפריט"} · לחיצה לשינוי">${inner}</button>`;
 
 function renderJournal() {
   const years = [...new Set(records.filter(inScope).map((r) => (r.date || "").slice(0, 4)).filter(Boolean))].sort().reverse();
   const cur = $("jYear").value;
   $("jYear").innerHTML = '<option value="">כל השנים</option>' + years.map((y) => `<option>${y}</option>`).join("");
   $("jYear").value = years.includes(cur) ? cur : (years[0] || "");
-  const { income, expenses } = journalLines();
-  const row = (l) => `<tr data-id="${l.r.id}"${needsReview(l.r) ? ' class="dup"' : ""}>
+  const lines = journalLines();
+  $("jRows").innerHTML = lines.map((l) => `<tr data-id="${l.r.id}"${needsReview(l.r) ? ' class="dup"' : ""}>
       <td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.balance)}</td>
       <td>${needsReview(l.r) ? '<span title="מסמך לבדיקה">⚠️</span> ' : ""}${esc(l.details)}</td>
-      <td class="num">${l.income ? l.debit : accountCell(l)}</td>
-      <td class="num">${l.income ? accountCell(l) : l.credit}</td>
+      <td class="num">${pickable(l, l.debit, "acc-code")}</td>
+      <td class="num">${l.credit}</td>
       <td class="num">${l.amount.toLocaleString("he-IL", { maximumFractionDigits: 2 })}</td>
-      <td class="num">${esc(l.ref)}</td></tr>`;
-  const section = (title, lines) => (lines.length ? `<tr class="j-section"><td colspan="9">${title}</td></tr>` + lines.map(row).join("") : "");
-  $("jRows").innerHTML = section("הכנסות", income) + section("הוצאות", expenses);
-  $("jEmpty").hidden = income.length + expenses.length > 0;
+      <td class="num">${esc(l.ref)}</td>
+      <td>${pickable(l, esc(accountName(l.debit)), "acc-name")}</td></tr>`).join("");
+  $("jEmpty").hidden = lines.length > 0;
 }
 $("jYear").addEventListener("input", renderJournal);
 
-// Clicking the account turns it into a list of accounts; picking one saves it on the document.
+// Clicking the account turns it into a list of the expense accounts; picking one saves it on the document.
 $("jRows").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-acc]");
   if (btn) {
@@ -1186,13 +1187,12 @@ $("jRows").addEventListener("click", (e) => {
     const cur = accountOf(r);
     const sel = document.createElement("select");
     sel.className = "acc-pick";
-    sel.innerHTML = ACCOUNTS.filter(([c]) => /^[4-6]|^15/.test(c))
-      .map(([c, n]) => `<option value="${c}"${c === cur ? " selected" : ""}>${c} · ${esc(n)}</option>`).join("");
+    sel.innerHTML = EXPENSE_ACCOUNTS.map(([c, n]) => `<option value="${c}"${c === cur ? " selected" : ""}>${c} · ${esc(n)}</option>`).join("");
     btn.replaceWith(sel);
     sel.focus();
     const done = async (save) => {
       if (save && sel.value !== cur) {
-        try { await store.update(r.id, { account: sel.value }); toast(`החשבון עודכן ל-${sel.value} ${accountName(sel.value)}`); }
+        try { await store.update(r.id, { account: sel.value, accountBy: "hand" }); toast(`החשבון עודכן ל-${sel.value} ${accountName(sel.value)}`); }
         catch (err) { toast("השמירה נכשלה: " + err.message); }
       }
       renderJournal();
@@ -1206,36 +1206,28 @@ $("jRows").addEventListener("click", (e) => {
   if (tr) openEntry(tr.dataset.id);
 });
 
-// The same lines as an Excel sheet, laid out like the workbook: real dates shown as dd-mm-yy,
-// a heading row for each part, numbers as numbers.
+// The same lines as an Excel sheet, laid out like the workbook: real dates shown as dd/mm/yy,
+// the accounts and amounts as numbers.
 $("jExport").onclick = () => {
-  const { income, expenses } = journalLines();
-  const aoa = [], dateRows = [];
+  const lines = journalLines();
+  if (!lines.length) { toast("אין מה לייצא"); return; }
   // Excel's own day number (days since 30-12-1899), so no time zone can move a date by a day.
   const toDate = (iso) => (iso ? (Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) - Date.UTC(1899, 11, 30)) / 864e5 : "");
-  const put = (title, lines) => {
-    if (!lines.length) return;
-    aoa.push([title, "", "", "", "ספק / פרטים (מוגבל ל 24 תווים)", "חובה", "זכות", "סכום", "אסמכתא"]);
-    for (const l of lines) {
-      dateRows.push(aoa.length);
-      aoa.push([toDate(l.date), toDate(l.date), toDate(l.date), toDate(l.balance), l.details,
-        +l.debit, +l.credit, l.amount, /^\d+$/.test(l.ref) ? +l.ref : l.ref]);
-    }
-    aoa.push([]);
-  };
-  put("הכנסות", income);
-  put("הוצאות", expenses);
-  if (!aoa.length) { toast("אין מה לייצא"); return; }
+  const aoa = [["הוצאות", "", "", "", "ספק / פרטים (מוגבל ל 24 תווים)", "חובה", "זכות", "סכום", "אסמכתא", "תאור חשבון חובה"]];
+  for (const l of lines) {
+    aoa.push([toDate(l.date), toDate(l.date), toDate(l.date), toDate(l.balance), l.details,
+      +l.debit, +l.credit, l.amount, /^\d+$/.test(l.ref) ? +l.ref : l.ref, accountName(l.debit)]);
+  }
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  for (const r of dateRows) for (let c = 0; c < 4; c++) {
-    const cell = ws[XLSX.utils.encode_cell({ r, c })];
-    if (cell && cell.t === "n") cell.z = "dd-mm-yy";
+  for (let r = 1; r < aoa.length; r++) {
+    for (let c = 0; c < 4; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cell && cell.t === "n") cell.z = "dd/mm/yy";
+    }
+    const sum = ws[XLSX.utils.encode_cell({ r, c: 7 })];
+    if (sum && sum.t === "n") sum.z = Number.isInteger(sum.v) ? "#,##0" : "#,##0.00";
   }
-  for (let r = 0; r < aoa.length; r++) {
-    const cell = ws[XLSX.utils.encode_cell({ r, c: 7 })];
-    if (cell && cell.t === "n") cell.z = Number.isInteger(cell.v) ? "#,##0" : "#,##0.00";
-  }
-  ws["!cols"] = [10, 10, 10, 10, 26, 9, 9, 11, 12].map((wch) => ({ wch }));
+  ws["!cols"] = [10, 10, 10, 10, 26, 9, 9, 11, 12, 22].map((wch) => ({ wch }));
   const wb = XLSX.utils.book_new();
   wb.Workbook = { Views: [{ RTL: true }] };
   XLSX.utils.book_append_sheet(wb, ws, "פקודות יומן");
