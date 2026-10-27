@@ -112,6 +112,41 @@ details.raw pre { white-space: pre-wrap; max-height: 260px; overflow: auto; back
 .nav-badge { display: inline-block; min-width: 20px; padding: 0 6px; margin-inline-start: 4px; border-radius: 99px; background: var(--brand-amber);
   color: #3a1a10; font-size: 12px; font-weight: 700; text-align: center; }
 
+/* ---- home page: the sign-in photo beside the office at a glance ---- */
+.home-view { grid-template-columns: minmax(0, 1.25fr) minmax(400px, 1fr); }
+.home-card { position: relative; width: min(560px, 100%); padding: 30px 30px 24px; border-radius: 18px; color: var(--brand-ink);
+  background: #fff; box-shadow: 0 18px 50px rgba(166, 51, 33, .16), 0 2px 6px rgba(0, 0, 0, .05); overflow: hidden; }
+.home-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.home-logo { width: min(230px, 60%); height: auto; }
+.home-user { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 12px; color: #a08779; direction: ltr; }
+.home-user .linklike { color: var(--brand-red); font-size: 13px; }
+.home-hello { margin: 18px 0 0; font-size: 1.7rem; font-weight: 900; color: var(--brand-red); }
+.home-sub { margin: 2px 0 16px; color: #8a6f62; }
+.home-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 20px; }
+.home-stat { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 6px; border-radius: 12px;
+  background: var(--brand-cream); border: 1px solid #f1e2d7; }
+.home-stat b { font-size: 1.25rem; color: var(--brand-ink); direction: ltr; }
+.home-stat span { font-size: 12px; color: #8a6f62; }
+.home-stat.warn { background: #fff4df; border-color: var(--brand-amber); }
+.home-stat.warn b { color: var(--brand-orange); }
+.home-card .cv-choose label { display: block; font-weight: 700; margin-bottom: 6px; }
+.home-card button.primary { background: var(--brand-orange); border-color: var(--brand-orange); color: #fff; white-space: nowrap; }
+.home-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+.home-actions button { padding: 12px 8px; border-radius: 12px; border: 1px solid #ecd6c8; background: #fff; color: var(--brand-ink); font-weight: 500; }
+.home-actions button:hover:not(:disabled) { background: #fff4ea; border-color: var(--brand-orange); }
+.home-actions button b { display: inline-block; min-width: 20px; margin-inline-start: 4px; padding: 0 6px; border-radius: 99px;
+  background: var(--brand-amber); color: #3a1a10; font-size: 12px; }
+.home-actions button b:empty { display: none; }
+.home-card .new-client { margin-top: 18px; padding-top: 16px; border-top: 1px solid #ecdcd2; }
+.home-card .row input { border: 1px solid #e4cfc2; background: #fff; color: var(--brand-ink); }
+.home-card button.ghost { color: var(--brand-red); border-color: #e4cfc2; background: #fff; white-space: nowrap; }
+@media (max-width: 820px) {
+  .home-view { grid-template-columns: 1fr; }
+  .home-stats { grid-template-columns: repeat(2, 1fr); }
+  .home-actions { grid-template-columns: 1fr; }
+  .home-card { padding: 24px 18px 18px; }
+}
+
 /* ---- choosing the client: a dropdown on a light card with the logo ---- */
 .client-view { min-height: 100vh; display: flex; justify-content: center; align-items: flex-start; padding: 10vh 16px 16px; }
 .client-panel { flex: 0 1 560px; background: var(--brand-cream); color: var(--brand-ink); border: 0; box-shadow: 0 20px 50px rgba(0, 0, 0, .3); }

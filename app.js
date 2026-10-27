@@ -108,7 +108,7 @@ function enterApp() {
   $("loginView").hidden = true;
   $("userEmail").textContent = $("cvEmail").textContent = user?.email || "";
   $("modeNote").hidden = CLOUD;
-  $("logoutBtn").hidden = !CLOUD;
+  $("logoutBtn").hidden = $("homeLogout").hidden = !CLOUD;
   $("shareBtn").hidden = !(CLOUD && OWNER_EMAILS.includes(user.email));
   const denied = (err) => showLogin(err.code === "permission-denied"
     ? `לחשבון ${user.email} אין הרשאה. בקשו מהבעלים לשתף אתכם.`
@@ -191,18 +191,55 @@ function clientOptions(selected) {
 function showClients() {
   $("appView").hidden = true;
   $("clientView").hidden = false;
+  $("clientSelect").innerHTML = "";
   renderClientPickers();
   $("clientSelect").focus();
 }
 
 function renderClientPickers() {
-  const pick = $("clientView").hidden ? client : (client ?? (lastClient() || ALL));
+  // On the home page a choice already made in the dropdown stays when the data refreshes.
+  const pick = $("clientSelect").value && !$("clientView").hidden ? $("clientSelect").value : (client ?? (lastClient() || ALL));
   $("clientSelect").innerHTML = clientOptions(pick);
+  renderHome();
   if (client !== null) $("navClient").innerHTML = clientOptions(client);
   // Upload with "all clients": each document goes to the client named on it, or to one picked here.
   $("uploadClient").innerHTML = '<option value="">🔎 לפי שם הלקוח שבמסמך</option>'
     + clientNames().map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
 }
+
+// ---------- home page ----------
+// A greeting by the time of day, the office at a glance, and the way in: pick a client, or go
+// straight to taking in documents, the ones waiting for review, or everything.
+
+function renderHome() {
+  if ($("clientView").hidden) return;
+  const h = new Date().getHours();
+  const hello = h < 5 ? "לילה טוב" : h < 12 ? "בוקר טוב" : h < 17 ? "צהריים טובים" : h < 21 ? "ערב טוב" : "לילה טוב";
+  const first = (user?.displayName || "").split(" ")[0];
+  $("homeHello").textContent = first ? `${hello}, ${first}` : hello;
+  const review = records.filter(needsReview).length;
+  const month = new Date().toISOString().slice(0, 7);
+  const thisMonth = records.filter((r) => (r.date || "").startsWith(month));
+  const stat = (n, label, cls = "") => `<div class="home-stat${cls}"><b>${n}</b><span>${label}</span></div>`;
+  $("homeStats").innerHTML = stat(clientNames().length, "לקוחות") + stat(records.length, "מסמכים")
+    + stat(review, "לבדיקה", review ? " warn" : "") + stat(fmt(round2(thisMonth.reduce((s, r) => s + (r.amount || 0), 0))), "החודש");
+  $("homeReviewCount").textContent = review || "";
+  $("homeReview").disabled = !review;
+}
+const homeGo = (view) => {
+  chooseClient($("clientSelect").value);
+  showView(view);
+};
+$("homeUpload").onclick = () => homeGo("upload");
+// The picked client's documents for review, or everyone's when that client has none.
+$("homeReview").onclick = () => {
+  const pick = $("clientSelect").value;
+  chooseClient(records.some((r) => (pick === ALL || r.client === pick) && needsReview(r)) ? pick : ALL);
+  showReview();
+};
+$("homeAll").onclick = () => $("allDocsBtn").click();
+$("homeBtn").onclick = showClients;
+$("homeLogout").onclick = () => $("logoutBtn").click();
 
 $("clientForm").onsubmit = (e) => { e.preventDefault(); chooseClient($("clientSelect").value); };
 $("navClient").onchange = () => chooseClient($("navClient").value);

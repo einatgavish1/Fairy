@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=9">
+<link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
 
@@ -33,20 +33,40 @@
   </div>
 </section>
 
-<section id="clientView" class="client-view" hidden>
-  <div class="panel client-panel">
-    <div class="cv-head"><img class="cv-logo" src="assets/logo.png" alt="עינת גביש · רואת חשבון"><span class="email" id="cvEmail"></span></div>
-    <form id="clientForm" class="cv-choose">
-      <label for="clientSelect">בחרו לקוח</label>
-      <div class="row">
-        <select id="clientSelect" class="client-select"></select>
-        <button class="primary">כניסה</button>
+<!-- The home page after signing in: the same photo as the sign-in page, beside the office at a glance. -->
+<section id="clientView" class="brand-login home-view" hidden>
+  <div class="bl-photo" aria-hidden="true"></div>
+  <div class="bl-side">
+    <div class="home-card">
+      <span class="bl-stripe" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+      <div class="home-top">
+        <img class="home-logo" src="assets/logo.png" alt="עינת גביש · רואת חשבון">
+        <span class="home-user"><span id="cvEmail"></span><button type="button" class="linklike" id="homeLogout">יציאה</button></span>
       </div>
-    </form>
-    <form class="row new-client" id="newClientForm">
-      <input id="newClientName" placeholder="שם לקוח חדש" autocomplete="off">
-      <button class="ghost">+ הוספת לקוח</button>
-    </form>
+      <h1 class="home-hello" id="homeHello">שלום</h1>
+      <p class="home-sub">מערכת קליטת חשבוניות וקבלות</p>
+
+      <div class="home-stats" id="homeStats"></div>
+
+      <form id="clientForm" class="cv-choose">
+        <label for="clientSelect">עם איזה לקוח עובדים?</label>
+        <div class="row">
+          <select id="clientSelect" class="client-select"></select>
+          <button class="primary">כניסה ←</button>
+        </div>
+      </form>
+
+      <div class="home-actions">
+        <button type="button" id="homeUpload">📥 קליטת מסמכים</button>
+        <button type="button" id="homeReview">⚠️ מסמכים לבדיקה <b id="homeReviewCount"></b></button>
+        <button type="button" id="homeAll">📚 כל המסמכים</button>
+      </div>
+
+      <form class="row new-client" id="newClientForm">
+        <input id="newClientName" placeholder="שם לקוח חדש" autocomplete="off">
+        <button class="ghost">+ הוספת לקוח</button>
+      </form>
+    </div>
   </div>
 </section>
 
@@ -60,6 +80,7 @@
     <div class="side-nav-foot">
       <span class="email" id="userEmail"></span>
       <span class="mode" id="modeNote" hidden>מצב מקומי: הנתונים נשמרים רק בדפדפן הזה</span>
+      <button class="link" id="homeBtn">🏠 דף הבית</button>
       <button class="link" id="allDocsBtn">📚 כל המסמכים</button>
       <button class="link" id="addClientBtn">➕ לקוח חדש</button>
       <button class="link danger-link" id="delClientBtn" hidden>🗑️ מחיקת הלקוח</button>
@@ -218,6 +239,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=15"></script>
+<script type="module" src="app.js?v=16"></script>
 </body>
 </html>
