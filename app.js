@@ -333,6 +333,32 @@ async function fingerprint(file) {
 // ---------- what needs a person to look at it ----------
 
 // The reasons a record should be checked by hand ([] when it is fine).
+// The service type this supplier's other documents were given: the most common one, an approved
+// document counting double ("" when the supplier has none yet).
+function learnedCategory(r, exceptId) {
+  if (!r.supplier && !r.supplierId) return "";
+  const count = {}, seen = new Set();
+  for (const x of [...records, ...savedNow]) {
+    if (x.id === exceptId || seen.has(x.id) || !x.category || !sameSupplier(r, x)) continue;
+    seen.add(x.id);
+    count[x.category] = (count[x.category] || 0) + (x.status === "ok" ? 2 : 1);
+  }
+  return Object.entries(count).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+}
+
+// Once a document is given a service type, the same supplier's documents still without one get it too,
+// and are checked again (one that has nothing else wrong stops waiting for review).
+async function spreadCategory(rec, fromId) {
+  if (!rec.category || (!rec.supplier && !rec.supplierId)) return 0;
+  const others = records.filter((x) => x.id !== fromId && !x.category && x.status !== "failed" && sameSupplier(rec, x));
+  for (const x of others) {
+    const upd = { ...x, category: rec.category };
+    const why = reviewReasons(upd, { exceptId: x.id, noText: (x.reviewWhy || "").includes("לא נמצא טקסט") });
+    await store.update(x.id, { category: rec.category, status: why.length ? "review" : "ok", reviewWhy: why.join(" · ") });
+  }
+  return others.length;
+}
+
 function reviewReasons(r, { exceptId, noText = false, failed = "" } = {}) {
   const why = [];
   if (failed) why.push(`הקובץ לא נקרא (${failed})`);
@@ -628,6 +654,7 @@ async function processFile(file, path, batch) {
     amount: found.amount ?? null, vat: found.vat ?? null, details: found.details || "",
     fileName: path, fileHash: hash,
   };
+  if (!rec.category) rec.category = learnedCategory(rec);
   const why = reviewReasons(rec, { noText: !failed && !text.trim(), failed });
   rec.status = failed ? "failed" : why.length ? "review" : "ok";
   rec.reviewWhy = why.join(" · ");
@@ -774,9 +801,12 @@ async function saveEntry(approve) {
   rec.status = why.length ? "review" : "ok";
   rec.reviewWhy = why.join(" · ");
   try {
-    await store.update(editing, rec);
+    const id = editing;
+    await store.update(id, rec);
     $("entryDlg").close();
-    toast(why.length ? "נשמר. המסמך עדיין מסומן לבדיקה" : "נשמר ואושר");
+    const spread = await spreadCategory(rec, id);
+    toast((why.length ? "נשמר. המסמך עדיין מסומן לבדיקה" : "נשמר ואושר")
+      + (spread ? `. סוג השירות "${rec.category}" נוסף גם ל-${spread} מסמכים של אותו ספק` : ""));
   } catch (err) { toast("השמירה נכשלה: " + err.message); }
 }
 $("entryForm").onsubmit = (e) => { e.preventDefault(); saveEntry(false); };
