@@ -67,7 +67,12 @@ button.link:hover { background: rgba(255, 255, 255, 0.12); }
   background: rgba(30, 60, 114, .94); border: 1px solid var(--accent); box-shadow: 0 6px 20px rgba(0, 0, 0, .3); backdrop-filter: blur(6px); }
 .progress.finished { border-color: var(--pos); }
 .progress.warn { border-color: var(--neg); }
-.prog-skip { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+.missed { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.missed summary { cursor: pointer; }
+.missed ul { margin: 8px 0; padding: 0 18px 0 0; max-height: 240px; overflow: auto; font-size: 13px; }
+.missed li { padding: 3px 0; }
+.missed li small { color: var(--neg); margin-inline-start: 6px; }
+.ltr-path { direction: ltr; unicode-bidi: isolate; }
 .progress.finished .bar i { background: var(--pos); }
 .prog-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin-bottom: 8px; }
 .prog-head span { color: var(--muted); font-size: 14px; }

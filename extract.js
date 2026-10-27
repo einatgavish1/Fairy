@@ -1,6 +1,6 @@
-// Reads the text out of a PDF or an image, then finds the invoice details in it.
+// Reads the text out of a PDF, an image or a Word file, then finds the invoice details in it.
 // Everything runs in the browser: pdf.js for PDFs that carry text, Tesseract (Hebrew + English)
-// for photos and scanned PDFs. Nothing is sent to an outside service.
+// for photos and scans (HEIC and TIFF converted first), mammoth for .docx. Nothing is sent to an outside service.
 
 const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
 const TESSERACT = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
@@ -47,10 +47,97 @@ function ocr(canvas, onProgress) {
 
 // ---------- reading files ----------
 
+// What can be read, by extension (the upload filter in app.js uses these too).
+export const READABLE = /\.(pdf|jpe?g|jfif|pjpeg|png|webp|gif|bmp|avif|heic|heif|tiff?|docx)$/i;
+export const MIME = {
+  pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", jfif: "image/jpeg", pjpeg: "image/jpeg", png: "image/png",
+  webp: "image/webp", gif: "image/gif", bmp: "image/bmp", avif: "image/avif", heic: "image/heic", heif: "image/heif",
+  tif: "image/tiff", tiff: "image/tiff", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+};
+const HEIC2ANY = "https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js";
+const PAKO = "https://cdn.jsdelivr.net/npm/pako@1.0.11/dist/pako.min.js";
+const UTIF = "https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js";
+const MAMMOTH = "https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js";
+const loaded = {};
+const loadOnce = (src) => (loaded[src] ||= loadScript(src));
+
+function kindOf(file) {
+  const ext = (file.name.match(/\.([^.]+)$/)?.[1] || "").toLowerCase();
+  if (ext === "pdf" || file.type === "application/pdf") return "pdf";
+  if (/^hei[cf]$/.test(ext) || /hei[cf]/.test(file.type)) return "heic";
+  if (/^tiff?$/.test(ext) || /tiff/.test(file.type)) return "tiff";
+  if (ext === "docx" || /wordprocessingml/.test(file.type)) return "docx";
+  return "image";
+}
+
 // -> { text, preview (small JPEG data URL), ocr (bool) }. onProgress(0..1, label).
 export async function readFile(file, onProgress = () => {}) {
-  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-  return isPdf ? readPdf(file, onProgress) : readImage(file, onProgress);
+  switch (kindOf(file)) {
+    case "pdf": return readPdf(file, onProgress);
+    case "heic": return readHeic(file, onProgress);
+    case "tiff": return readTiff(file, onProgress);
+    case "docx": return readDocx(file, onProgress);
+    default: return readImage(file, onProgress);
+  }
+}
+
+// iPhone photos: most browsers can't show HEIC, so it becomes a JPEG first.
+async function readHeic(file, onProgress) {
+  onProgress(0.02, "ממיר תמונת אייפון (HEIC)…");
+  await loadOnce(HEIC2ANY);
+  let jpeg;
+  try { jpeg = await window.heic2any({ blob: file, toType: "image/jpeg", quality: 0.92 }); }
+  catch { throw new Error("תמונת ה-HEIC פגומה או בגרסה שלא נתמכת. שמרו אותה כ-JPG"); }
+  if (Array.isArray(jpeg)) jpeg = jpeg[0];
+  return readImage(new File([jpeg], file.name.replace(/\.\w+$/, ".jpg"), { type: "image/jpeg" }), onProgress);
+}
+
+// Scanners often save TIFF, sometimes several pages in one file; the first three pages are read.
+async function readTiff(file, onProgress) {
+  onProgress(0.02, "פותח סריקת TIFF…");
+  await loadOnce(PAKO);
+  await loadOnce(UTIF);
+  const buf = await file.arrayBuffer();
+  const pages = window.UTIF.decode(buf).filter((ifd) => ifd.t256).slice(0, 3);
+  if (!pages.length) throw new Error("קובץ ה-TIFF ריק או פגום");
+  const parts = [];
+  let preview = "";
+  for (const [p, ifd] of pages.entries()) {
+    window.UTIF.decodeImage(buf, ifd);
+    const raw = document.createElement("canvas");
+    raw.width = ifd.width;
+    raw.height = ifd.height;
+    raw.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(window.UTIF.toRGBA8(ifd).buffer), ifd.width, ifd.height), 0, 0);
+    const canvas = drawScaled(raw, 2400, true);
+    if (!p) preview = toPreview(canvas);
+    parts.push(await ocr(canvas, (x) => onProgress((p + x) / pages.length, pages.length > 1 ? `מזהה טקסט בעמוד ${p + 1}…` : "מזהה טקסט…")));
+  }
+  return { text: parts.join("\n"), preview, ocr: true };
+}
+
+// Word (.docx): the text is in the file, no OCR needed. The preview is a plain picture of its first lines.
+async function readDocx(file, onProgress) {
+  onProgress(0.1, "קורא קובץ Word…");
+  await loadOnce(MAMMOTH);
+  const { value } = await window.mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+  onProgress(1, "");
+  return { text: value, preview: textPreview(value), ocr: false };
+}
+
+function textPreview(text) {
+  const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean).slice(0, 38);
+  const c = document.createElement("canvas");
+  c.width = 800;
+  c.height = 1060;
+  const x = c.getContext("2d");
+  x.fillStyle = "#fff";
+  x.fillRect(0, 0, c.width, c.height);
+  x.fillStyle = "#222";
+  x.font = "22px Arial";
+  x.direction = "rtl";
+  x.textAlign = "right";
+  lines.forEach((l, i) => x.fillText(l.slice(0, 70), 770, 44 + i * 27));
+  return toPreview(c);
 }
 
 async function readPdf(file, onProgress) {
@@ -108,7 +195,7 @@ function loadImage(file) {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => { URL.revokeObjectURL(url); ok(img); };
-    img.onerror = () => { URL.revokeObjectURL(url); bad(new Error("הקובץ לא נפתח כתמונה (אולי HEIC? שמרו כ-JPG)")); };
+    img.onerror = () => { URL.revokeObjectURL(url); bad(new Error("הקובץ לא נפתח כתמונה (ייתכן שהוא פגום)")); };
     img.src = url;
   });
 }

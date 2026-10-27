@@ -1,5 +1,5 @@
 import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES } from "./extract.js?v=3";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=5";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => (n < 0 ? "-" : "") + "₪" + Math.abs(n || 0).toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -279,10 +279,19 @@ async function readEntry(entry) {
   return (await Promise.all(children.map(readEntry))).flat();
 }
 
-const DOC_EXT = /\.(pdf|jpe?g|png|webp|gif|bmp)$/i;
-const MIME = { pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", bmp: "image/bmp" };
 const MAX_FILES = 300, MAX_SIZE = 30 * 1024 * 1024;
 const isZip = (f) => /\.zip$/i.test(f.name) || /zip/.test(f.type);
+const extOf = (name) => (name.match(/\.([^./]+)$/)?.[1] || "").toLowerCase();
+
+// Why a file can't be taken in, in words the person can act on.
+const NOT_READABLE = {
+  doc: "קובץ Word ישן (.doc). שמרו אותו כ-docx או PDF",
+  xls: "גיליון אקסל. ייצאו את המסמך ל-PDF", xlsx: "גיליון אקסל. ייצאו את המסמך ל-PDF", csv: "קובץ נתונים (CSV), לא מסמך",
+  msg: "הודעת מייל. שמרו את הקבצים המצורפים", eml: "הודעת מייל. שמרו את הקבצים המצורפים",
+  rar: "קובץ דחוס שאינו ZIP. פרסו אותו או דחסו מחדש כ-ZIP", "7z": "קובץ דחוס שאינו ZIP. פרסו אותו או דחסו מחדש כ-ZIP",
+  txt: "קובץ טקסט, לא מסמך", lnk: "קיצור דרך, לא הקובץ עצמו", ini: "קובץ מערכת",
+};
+const whyNot = (name) => NOT_READABLE[extOf(name)] || (extOf(name) ? `סוג קובץ שלא נתמך (.${extOf(name)})` : "קובץ בלי סיומת");
 
 let jszipReady;
 function jszip() {
@@ -301,73 +310,51 @@ function zipName(bytes) {
   catch { return new TextDecoder("windows-1255").decode(bytes); }
 }
 
-async function unzip(file, path, out, skipped) {
+async function unzip(file, path, out, missed) {
   const JSZip = await jszip();
   const zip = await JSZip.loadAsync(file, { decodeFileName: zipName });
   for (const entry of Object.values(zip.files)) {
     const name = entry.name.split("/").pop();
     if (entry.dir || !name || name.startsWith(".") || entry.name.startsWith("__MACOSX/")) continue;
-    if (out.length >= MAX_FILES) return;
     const inner = `${path}/${entry.name}`;
-    if (!DOC_EXT.test(name) && !/\.zip$/i.test(name)) { skipped.push(inner); continue; }
+    if (!READABLE.test(name) && !/\.zip$/i.test(name)) { missed.push({ path: inner, why: whyNot(name) }); continue; }
     const blob = await entry.async("blob");
-    if (blob.size > MAX_SIZE) { skipped.push(inner); continue; }
-    const ext = name.split(".").pop().toLowerCase();
-    await collect({ file: new File([blob], name, { type: MIME[ext] || (ext === "zip" ? "application/zip" : "") }), path: inner }, out, skipped);
+    await collect({ file: new File([blob], name, { type: MIME[extOf(name)] || (extOf(name) === "zip" ? "application/zip" : "") }), path: inner }, out, missed);
   }
 }
 
-async function collect({ file, path }, out, skipped) {
+// Sorts what was dropped or picked into documents to read and files left out (with the reason).
+async function collect({ file, path }, out, missed) {
   path ||= file.webkitRelativePath || file.name;
-  if (isZip(file)) {
-    try { await unzip(file, path.replace(/\.zip$/i, ""), out, skipped); }
-    catch { skipped.push(path); }
-  } else if ((/pdf|image/.test(file.type) || DOC_EXT.test(file.name)) && file.size <= MAX_SIZE) {
-    if (out.length < MAX_FILES) out.push({ file, path });
-  } else if (!file.name.startsWith(".")) {
-    skipped.push(path);
-  }
+  if (file.name.startsWith(".") || /^(desktop\.ini|thumbs\.db)$/i.test(file.name)) return;
+  if (file.size > MAX_SIZE) missed.push({ path, why: "גדול מ-30MB" });
+  else if (isZip(file)) {
+    try { await unzip(file, path.replace(/\.zip$/i, ""), out, missed); }
+    catch { missed.push({ path, why: "קובץ ה-ZIP פגום או מוגן בסיסמה" }); }
+  } else if (!(READABLE.test(file.name) || /pdf|image/.test(file.type))) missed.push({ path, why: whyNot(file.name) });
+  else if (out.length >= MAX_FILES) missed.push({ path, why: `מעל ${MAX_FILES} מסמכים בהעלאה אחת. העלו אותו בפעם הבאה` });
+  else out.push({ file, path });
 }
 
 const pending = new Set();
 function syncSaveAll() { $("saveAllBtn").hidden = [...pending].filter((it) => it.ready).length < 2; }
 $("saveAllBtn").onclick = async () => { for (const it of [...pending]) if (it.ready) await it.save(); };
 
-// "heic (200), docx (3)" for the files that were left out.
-function kinds(paths) {
-  const count = {};
-  for (const p of paths) { const ext = (p.match(/\.([^./]+)$/)?.[1] || "ללא סיומת").toLowerCase(); count[ext] = (count[ext] || 0) + 1; }
-  return Object.entries(count).sort((a, b) => b[1] - a[1]).map(([e, n]) => `${e} (${n})`).join(", ");
-}
-// A message in the progress panel that stays until the next upload.
-function progNote(html, warn = false) {
-  const box = $("progress");
-  box.className = "progress" + (warn ? " warn" : "");
-  box.innerHTML = html;
-  box.hidden = false;
-  document.title = TITLE;
-}
-
 async function addFiles(list) {
   if (!list.length) return;
   showView("upload");
-  if (prog.done >= prog.total) progNote(`<div class="prog-head"><b>⏳ מכין ${list.length > 1 ? `${list.length} קבצים` : "את הקובץ"} לקריאה…</b></div>`);
-  const out = [], skipped = [];
+  if (prog.done >= prog.total) progReset();
+  progNote(`⏳ מכין ${list.length > 1 ? `${list.length} קבצים` : "את הקובץ"} לקריאה…`);
+  const out = [], missed = [];
   try {
-    for (const x of list) await collect(x instanceof File ? { file: x } : x, out, skipped);
+    for (const x of list) await collect(x instanceof File ? { file: x } : x, out, missed);
   } catch (e) {
-    progNote(`<b>❌ לא הצלחתי לפתוח את הקבצים:</b> ${esc(e.message)}`, true);
+    progNote(`❌ לא הצלחתי לפתוח את הקבצים: ${esc(e.message)}`, true);
     return;
   }
-  const skippedNote = skipped.length
-    ? `<p class="prog-skip">דולגו ${skipped.length} קבצים שאינם PDF או תמונה: ${esc(kinds(skipped))}.${/heic|heif/i.test(kinds(skipped)) ? " קובצי HEIC (תמונות מאייפון) צריך לשמור קודם כ-JPG." : ""}</p>` : "";
-  if (!out.length) {
-    if (prog.done >= prog.total) progNote(`<b>⚠️ לא נמצאו מסמכים לקריאה.</b>${skippedNote}`, true);
-    else toast(`לא נמצאו מסמכים לקריאה (${kinds(skipped)})`);
-    return;
-  }
-  if (out.length >= MAX_FILES) toast(`נקלטים ${MAX_FILES} המסמכים הראשונים. את השאר מעלים בפעם הבאה.`);
-  prog.skippedNote = skippedNote;
+  prog.missed.push(...missed);
+  renderMissed();
+  if (!out.length) { progNote("⚠️ לא נמצאו מסמכים שאפשר לקרוא.", true); return; }
   progStart(out.length);
   // One block per upload, newest on top, its files in their own order.
   const batch = document.createElement("div");
@@ -376,13 +363,17 @@ async function addFiles(list) {
 }
 
 // ---------- progress of the whole upload ----------
-// One panel for everything being read: how many are done, roughly how long is left,
-// and how the finished ones came out. A single file needs only its own bar.
+// One panel for everything being read: how many are done, roughly how long is left, how the
+// finished ones came out, and a list of every file that was not taken in and why.
+// A single file with nothing left out needs only its own bar.
 
 const TITLE = document.title;
-const prog = { total: 0, done: 0 };
+const prog = { total: 0, done: 0, missed: [] };
+function progReset() {
+  Object.assign(prog, { total: 0, done: 0, ready: 0, check: 0, dup: 0, failed: 0, saved: 0, started: Date.now(), ended: 0, share: new Map(), missed: [] });
+  renderMissed();
+}
 function progStart(n) {
-  if (prog.done >= prog.total) Object.assign(prog, { total: 0, done: 0, ready: 0, check: 0, dup: 0, failed: 0, saved: 0, started: Date.now(), ended: 0, share: new Map(), skippedNote: prog.skippedNote });
   prog.total += n;
   renderProgress();
 }
@@ -396,6 +387,18 @@ function progDone(item, kind) {
   if (prog.done >= prog.total) prog.ended = Date.now();
   renderProgress();
 }
+function progFailed(item, path, why) {
+  prog.missed.push({ path, why });
+  renderMissed();
+  progDone(item, "failed");
+}
+
+// A line in the panel that stays until there is progress to show.
+function progNote(text, warn = false) {
+  $("progress").hidden = false;
+  $("progress").className = "progress" + (warn ? " warn" : "");
+  $("progMain").innerHTML = `<div class="prog-head"><b>${text}</b></div>`;
+}
 
 const minutes = (ms) => { const m = Math.round(ms / 60000); return m < 1 ? "פחות מדקה" : m === 1 ? "דקה" : `${m} דקות`; };
 const chip = (icon, n, label) => (n ? `<span class="chip">${icon} ${n} ${label}</span>` : "");
@@ -404,24 +407,47 @@ function renderProgress() {
   renderProgress.raf = requestAnimationFrame(() => {
     renderProgress.raf = 0;
     const box = $("progress");
-    if (prog.total < 2 && !prog.skippedNote) { box.hidden = true; document.title = TITLE; return; }
+    if (prog.total < 2) {
+      if (!prog.missed.length) box.hidden = true;
+      document.title = TITLE;
+      return;
+    }
     const part = [...prog.share.values()].reduce((s, p) => s + p, 0);
     const frac = Math.min(1, (prog.done + part) / prog.total), pct = Math.floor(frac * 100);
     const finished = prog.done >= prog.total;
     const elapsed = (finished ? prog.ended : Date.now()) - prog.started;
-    const left = finished ? "" : frac > 0.03 ? ((rest) => (rest < 60000 ? "נשארה פחות מדקה" : `נשארו עוד כ-${minutes(rest)}`))((elapsed / frac) * (1 - frac)) : "מחשב כמה זמן זה ייקח…";
+    const rest = (elapsed / frac) * (1 - frac);
+    const left = finished ? "" : frac < 0.03 ? "מחשב כמה זמן זה ייקח…" : rest < 60000 ? "נשארה פחות מדקה" : `נשארו עוד כ-${minutes(rest)}`;
     box.hidden = false;
     box.className = "progress" + (finished ? " finished" : "");
-    box.innerHTML = `<div class="prog-head">
+    $("progMain").innerHTML = `<div class="prog-head">
         <b>${finished ? `✨ הקריאה הסתיימה: ${prog.total} מסמכים תוך ${minutes(elapsed)}` : `קורא מסמכים: ${prog.done} מתוך ${prog.total}`}</b>
         <span class="grow">${left}</span><b class="pct">${pct}%</b></div>
       <div class="bar"><i style="width:${frac * 100}%"></i></div>
-      <div class="prog-chips">${chip("✅", prog.ready, "מוכנים לשמירה")}${chip("✏️", prog.check, "חסרים פרטים")}${chip("⚠️", prog.dup, "כפולים")}${chip("❌", prog.failed, "לא נקראו")}${chip("💾", prog.saved, "נשמרו")}</div>${prog.skippedNote || ""}`;
+      <div class="prog-chips">${chip("✅", prog.ready, "מוכנים לשמירה")}${chip("✏️", prog.check, "חסרים פרטים")}${chip("⚠️", prog.dup, "כפולים")}${chip("❌", prog.failed, "לא נקראו")}${chip("💾", prog.saved, "נשמרו")}</div>`;
     document.title = finished ? TITLE : `(${pct}%) ${TITLE}`;
   });
 }
 // While files are being read the time left keeps counting down even between steps.
 setInterval(() => { if (prog.done < prog.total) renderProgress(); }, 5000);
+
+// The files that were not taken in, each with its reason; kept apart from the progress
+// so the list stays open while the progress above it updates.
+function renderMissed() {
+  const list = prog.missed, el = $("progMissed");
+  if (!list.length) { el.innerHTML = ""; return; }
+  $("progress").hidden = false;
+  const wasOpen = el.querySelector("details")?.open ?? list.length <= 10;
+  el.innerHTML = `<details class="missed"${wasOpen ? " open" : ""}>
+      <summary>⚠️ <b>${list.length} קבצים לא נקלטו</b> (לחצו לרשימה)</summary>
+      <ul>${list.map((m) => `<li><span class="ltr-path">${esc(m.path)}</span> <small>${esc(m.why)}</small></li>`).join("")}</ul>
+      <button type="button" class="ghost" id="copyMissed">📋 העתקת הרשימה</button>
+    </details>`;
+  $("copyMissed").onclick = async () => {
+    const txt = list.map((m) => `${m.path}\t${m.why}`).join("\n");
+    try { await navigator.clipboard.writeText(txt); toast("הרשימה הועתקה"); } catch { prompt("העתיקו את הרשימה:", txt); }
+  };
+}
 
 // At most two files are read at a time, so a big folder doesn't choke the browser.
 let reading = 0;
@@ -529,7 +555,7 @@ async function processFile(file, path, batch) {
     el.querySelector(".drop-it").onclick = () => { pending.delete(item); el.remove(); syncSaveAll(); };
   } catch (e) {
     pending.delete(item);
-    progDone(item, "failed");
+    progFailed(item, path, e.message || "שגיאה בקריאה");
     el.querySelector(".body").innerHTML = `<p class="err">לא הצלחתי לקרוא את ${esc(path)}: ${esc(e.message)}</p><button class="ghost drop-it">הסרה</button>`;
     el.querySelector(".drop-it").onclick = () => el.remove();
   }
