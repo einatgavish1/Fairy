@@ -1,0 +1,14 @@
+# Firebase CLI leftovers
+firebase-debug.log
+firestore-debug.log
+.firebase/
+# Never commit client documents or exports
+*.pdf
+*.xlsx
+*.jpg
+*.jpeg
+*.png
+*.heic
+private/
+.env*
+node_modules/
