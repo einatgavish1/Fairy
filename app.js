@@ -230,7 +230,9 @@ function renderHome() {
   if ($("clientView").hidden) return;
   const h = new Date().getHours();
   const hello = h < 5 ? "לילה טוב" : h < 12 ? "בוקר טוב" : h < 17 ? "צהריים טובים" : h < 21 ? "ערב טוב" : "לילה טוב";
-  const first = (user?.displayName || "").split(" ")[0];
+  // Google gives the name as it is in the account (often in English); these people are greeted in Hebrew.
+  const HEBREW_NAMES = { "einatgavish1@gmail.com": "עינת" };
+  const first = HEBREW_NAMES[user?.email] || (user?.displayName || "").split(" ")[0];
   $("homeHello").textContent = first ? `${hello}, ${first}` : hello;
   const review = records.filter(needsReview).length;
   const month = new Date().toISOString().slice(0, 7);
