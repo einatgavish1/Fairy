@@ -112,6 +112,24 @@ details.raw pre { white-space: pre-wrap; max-height: 260px; overflow: auto; back
 .nav-badge { display: inline-block; min-width: 20px; padding: 0 6px; margin-inline-start: 4px; border-radius: 99px; background: var(--brand-amber);
   color: #3a1a10; font-size: 12px; font-weight: 700; text-align: center; }
 
+/* ---- the way in: only the photo, as large as the window allows; its computer screen is the button ---- */
+.photo-login { position: fixed; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: #0e2f3f; overflow: hidden; }
+/* the same photo, blurred, fills the edges around it */
+.photo-login::before { content: ""; position: absolute; inset: -40px; background: url("assets/office.webp?v=3") center / cover;
+  filter: blur(28px) brightness(.7); }
+.pl-frame { position: relative; width: min(100vw, calc(100vh * 1600 / 893)); aspect-ratio: 1600 / 893; }
+.pl-frame img { display: block; width: 100%; height: 100%; }
+/* over the screen (its corners in the 1600 x 893 photo: 945,146 · 1287,146 · 1275,383 · 945,359) */
+.pl-screen { position: absolute; left: 59.06%; top: 16.35%; width: 21.38%; height: 26.54%; padding: 0; border: 0; border-radius: 0;
+  background: transparent; cursor: pointer; clip-path: polygon(3.2% 6.3%, 100% 0, 96.5% 100%, 0 89.9%);
+  animation: screen-hint 2.6s ease-in-out 1s 2; }
+.pl-screen:hover, .pl-screen:focus-visible { background: rgba(252, 176, 64, .18); outline: none; }
+@keyframes screen-hint { 50% { background: rgba(252, 176, 64, .22); } }
+.pl-err { position: relative; margin: 10px 16px 0; padding: 0 12px; border-radius: 8px; background: rgba(255, 255, 255, .92); color: var(--brand-red); }
+.pl-err:empty { display: none; }
+@media (prefers-reduced-motion: reduce) { .pl-screen { animation: none; } }
+
 /* ---- home page: the sign-in photo beside the office at a glance ---- */
 .home-view { grid-template-columns: minmax(0, 1.5fr) minmax(400px, 1fr); overflow-y: auto; }
 /* the whole photo, as it is: nothing cropped and nothing laid over it */
@@ -275,7 +293,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 
 /* ---- sign-in: the photo, warmed to the logo's colours, beside a light card with the logo ---- */
 .brand-login { position: fixed; inset: 0; z-index: 5; display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(340px, 1fr); background: var(--brand-cream); }
-.bl-photo { position: relative; background: url("assets/office.webp?v=2") 38% center / cover no-repeat; filter: saturate(.8) sepia(.32) contrast(1.04); }
+.bl-photo { position: relative; background: url("assets/office.webp?v=3") 38% center / cover no-repeat; filter: saturate(.8) sepia(.32) contrast(1.04); }
 /* a warm wash in the logo's amber and brick, fading into the card's cream */
 .bl-photo::before { content: ""; position: absolute; inset: 0; mix-blend-mode: soft-light;
   background: linear-gradient(160deg, rgba(252, 176, 64, .85), rgba(215, 106, 37, .45) 50%, rgba(166, 51, 33, .7)); }

@@ -129,13 +129,24 @@ const AUTH_ERRORS = {
 };
 const authError = (e) => AUTH_ERRORS[e.code] || `הכניסה נכשלה (${e.code || e.message}).`;
 
+// The photo always comes first; the app opens only after its computer screen is clicked ("knocked"),
+// even for someone still signed in from last time. A redirect sign-in reloads the page, so the knock
+// is kept across it.
+let knocked = false, admitted = false;
+try { knocked = sessionStorage.getItem("fairy-knock") === "1"; sessionStorage.removeItem("fairy-knock"); } catch {}
+
 if (CLOUD) {
   const { auth, fa } = store;
   $("googleBtn").onclick = async () => {
     $("loginErr").textContent = "";
+    knocked = true;
+    if (admitted) return enterApp();
     try { await fa.signInWithPopup(auth, new fa.GoogleAuthProvider()); }
     catch (e) {
-      if (e.code === "auth/popup-blocked") return fa.signInWithRedirect(auth, new fa.GoogleAuthProvider());
+      if (e.code === "auth/popup-blocked") {
+        try { sessionStorage.setItem("fairy-knock", "1"); } catch {}
+        return fa.signInWithRedirect(auth, new fa.GoogleAuthProvider());
+      }
       $("loginErr").textContent = authError(e);
     }
   };
@@ -155,15 +166,19 @@ if (CLOUD) {
   fa.getRedirectResult(auth).catch((e) => { $("loginErr").textContent = authError(e); });
   fa.onAuthStateChanged(auth, async (u) => {
     user = u;
-    if (!u) return showLogin();
+    admitted = false;
+    if (!u) { knocked = false; return showLogin(); }
     if (!(await store.allowed(u.email))) {
       await fa.signOut(auth);
       return showLogin(`החשבון ${u.email} לא מורשה. בקשו מהבעלים להוסיף אותו בשיתוף.`);
     }
-    enterApp();
+    admitted = true;
+    if (knocked) enterApp();
+    else showLogin();
   });
 } else {
-  setTimeout(enterApp); // after the rest of this module has set up
+  $("googleBtn").onclick = enterApp;
+  showLogin();
 }
 
 // ---------- clients ----------

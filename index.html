@@ -7,35 +7,29 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=11">
+<link rel="stylesheet" href="style.css?v=12">
 </head>
 <body>
 
-<section id="loginView" class="brand-login" hidden>
-  <div class="bl-photo" aria-hidden="true"></div>
-  <div class="bl-side">
-    <div class="bl-card">
-      <span class="bl-stripe" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-      <h1 class="bl-logo"><img src="assets/logo.png" alt="עינת גביש · רואת חשבון"></h1>
-      <p class="bl-sub">מערכת קליטת חשבוניות וקבלות</p>
-      <button class="google" id="googleBtn"><span class="g" aria-hidden="true">G</span> כניסה עם חשבון Google</button>
-      <!-- Hidden while Email/Password sign-in is off in Firebase; Google only for now. -->
-      <form class="pw-form" id="pwForm" hidden>
-        <p class="pw-title">או עם מייל וסיסמה</p>
-        <input type="email" id="pwEmail" placeholder="מייל" autocomplete="username" dir="ltr" required>
-        <input type="password" id="pwPass" placeholder="סיסמה" autocomplete="current-password" dir="ltr" required>
-        <button class="ghost" type="submit">כניסה</button>
-        <p class="hint-login"><button type="button" class="linklike" id="pwReset">שכחתי סיסמה</button></p>
-      </form>
-      <p class="err" id="loginErr"></p>
-      <p class="bl-foot">🔒 כניסה למורשים בלבד · המידע מוגן ונשמר בישראל</p>
-    </div>
+<!-- The way in: only the office photo. The computer screen in it (with the logo) is the door:
+     clicking it signs in with Google if needed and goes on to the clients. -->
+<section id="loginView" class="photo-login" hidden>
+  <div class="pl-frame">
+    <img src="assets/office.webp?v=3" alt="עינת גביש · רואת חשבון">
+    <button type="button" class="pl-screen" id="googleBtn" title="כניסה" aria-label="כניסה למערכת"></button>
   </div>
+  <p class="err pl-err" id="loginErr"></p>
+  <!-- Hidden while Email/Password sign-in is off in Firebase; Google only for now. -->
+  <form class="pw-form" id="pwForm" hidden>
+    <input type="email" id="pwEmail" autocomplete="username" dir="ltr">
+    <input type="password" id="pwPass" autocomplete="current-password" dir="ltr">
+    <button type="button" id="pwReset" hidden></button>
+  </form>
 </section>
 
 <!-- The home page after signing in: the same photo as the sign-in page, beside the office at a glance. -->
 <section id="clientView" class="brand-login home-view" hidden>
-  <div class="home-photo"><img src="assets/office.webp?v=2" alt="עינת גביש במשרד, והלוגו על מסך המחשב"></div>
+  <div class="home-photo"><img src="assets/office.webp?v=3" alt="עינת גביש במשרד, והלוגו על מסך המחשב"></div>
   <div class="bl-side">
     <div class="home-card">
       <span class="bl-stripe" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
@@ -239,6 +233,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=16"></script>
+<script type="module" src="app.js?v=17"></script>
 </body>
 </html>
