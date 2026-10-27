@@ -1,14 +1,14 @@
 // Firebase web config for project fairy-36dc8 (public by nature; access is enforced by firestore.rules).
-// While apiKey is empty the app runs in local mode and keeps the records in this browser only.
+// With an empty apiKey the app runs in local mode and keeps the records in this browser only.
 export const firebaseConfig = {
-  apiKey: "",
+  apiKey: "AIzaSyDXcqjEyCH-fAIBiMnFN44K1o9EXCf467E",
   authDomain: "fairy-36dc8.firebaseapp.com",
   projectId: "fairy-36dc8",
   storageBucket: "fairy-36dc8.firebasestorage.app",
-  messagingSenderId: "",
-  appId: "",
+  messagingSenderId: "715164668680",
+  appId: "1:715164668680:web:3af40d085b53ad63d9d2bd",
 };
 
 // The owners can always sign in and manage who else may (the "שיתוף" button).
 // Keep in step with isOwner() in firestore.rules.
-export const OWNER_EMAILS = ["gavishori@gmail.com"];
+export const OWNER_EMAILS = ["einatgavish1@gmail.com", "gavishori@gmail.com"];
