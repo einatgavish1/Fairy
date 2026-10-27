@@ -12,3 +12,6 @@ firestore-debug.log
 private/
 .env*
 node_modules/
+# ...except the app's own pictures (logo, sign-in photo)
+!assets/*.png
+!assets/*.webp

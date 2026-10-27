@@ -4,58 +4,63 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Fairy · קליטת מסמכים</title>
+<title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&family=Orbitron:wght@800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=6">
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
 
-<section id="loginView" class="splash" hidden>
-  <div class="splash-floor" aria-hidden="true"></div>
-  <div class="splash-glow" aria-hidden="true"></div>
-  <div class="slogan3d fairy3d" role="img" aria-label="FAIRY">
-    <div class="slogan-rock"><span class="slogan-word" id="fairyText" aria-hidden="true">FAIRY</span></div>
-  </div>
-  <div class="slogan3d home-slogan" role="img" aria-label="כל קבלה במקומה">
-    <div class="slogan-rock"><span class="slogan-word" id="sloganText" aria-hidden="true">כל קבלה במקומה</span></div>
-  </div>
-  <div class="login-card">
-    <button class="primary google" id="googleBtn">כניסה עם Google</button>
-    <!-- Hidden while Email/Password sign-in is off in Firebase; Google only for now. -->
-    <form class="pw-form" id="pwForm" hidden>
-      <p class="pw-title">או עם מייל וסיסמה</p>
-      <input type="email" id="pwEmail" placeholder="מייל" autocomplete="username" dir="ltr" required>
-      <input type="password" id="pwPass" placeholder="סיסמה" autocomplete="current-password" dir="ltr" required>
-      <button class="ghost" type="submit">כניסה</button>
-      <p class="hint-login"><button type="button" class="linklike" id="pwReset">שכחתי סיסמה</button></p>
-    </form>
-    <p class="err" id="loginErr"></p>
+<section id="loginView" class="brand-login" hidden>
+  <div class="bl-photo" aria-hidden="true"></div>
+  <div class="bl-side">
+    <div class="bl-card">
+      <span class="bl-stripe" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+      <h1 class="bl-logo"><img src="assets/logo.png" alt="עינת גביש · רואת חשבון"></h1>
+      <p class="bl-sub">מערכת קליטת חשבוניות וקבלות</p>
+      <button class="google" id="googleBtn"><span class="g" aria-hidden="true">G</span> כניסה עם חשבון Google</button>
+      <!-- Hidden while Email/Password sign-in is off in Firebase; Google only for now. -->
+      <form class="pw-form" id="pwForm" hidden>
+        <p class="pw-title">או עם מייל וסיסמה</p>
+        <input type="email" id="pwEmail" placeholder="מייל" autocomplete="username" dir="ltr" required>
+        <input type="password" id="pwPass" placeholder="סיסמה" autocomplete="current-password" dir="ltr" required>
+        <button class="ghost" type="submit">כניסה</button>
+        <p class="hint-login"><button type="button" class="linklike" id="pwReset">שכחתי סיסמה</button></p>
+      </form>
+      <p class="err" id="loginErr"></p>
+      <p class="bl-foot">🔒 כניסה למורשים בלבד · המידע מוגן ונשמר בישראל</p>
+    </div>
   </div>
 </section>
 
 <section id="clientView" class="client-view" hidden>
   <div class="panel client-panel">
-    <div class="panel-head"><h2>✨ Fairy · בחירת לקוח</h2><span class="email" id="cvEmail"></span></div>
-    <input type="search" id="clientSearch" class="client-search" placeholder="חיפוש לקוח…" autocomplete="off">
-    <div class="client-grid" id="clientGrid"></div>
+    <div class="cv-head"><img class="cv-logo" src="assets/logo.png" alt="עינת גביש · רואת חשבון"><span class="email" id="cvEmail"></span></div>
+    <form id="clientForm" class="cv-choose">
+      <label for="clientSelect">בחרו לקוח</label>
+      <div class="row">
+        <select id="clientSelect" class="client-select"></select>
+        <button class="primary">כניסה</button>
+      </div>
+    </form>
     <form class="row new-client" id="newClientForm">
       <input id="newClientName" placeholder="שם לקוח חדש" autocomplete="off">
-      <button class="primary">+ לקוח חדש</button>
+      <button class="ghost">+ הוספת לקוח</button>
     </form>
   </div>
 </section>
 
 <div class="layout" id="appView" hidden>
   <nav class="side-nav" id="sideNav" aria-label="תפריט ראשי">
-    <div class="side-nav-title">✨ Fairy <small>קליטת מסמכים</small></div>
-    <div class="cur-client"><small>לקוח</small><b id="curClient"></b><button class="link" id="switchClient">🔄 החלפת לקוח</button></div>
+    <div class="side-nav-title"><img class="nav-logo" src="assets/logo.png" alt="עינת גביש · רואת חשבון"></div>
+    <label class="cur-client"><small>לקוח</small><select id="navClient"></select></label>
     <button data-view="upload" class="active">📥 קליטת מסמכים</button>
-    <button data-view="docs">📋 מסמכים שנקלטו</button>
+    <button data-view="docs">📋 מסמכים <span class="nav-badge" id="reviewBadge" hidden></span></button>
     <button data-view="summary">📊 סיכום</button>
     <div class="side-nav-foot">
       <span class="email" id="userEmail"></span>
       <span class="mode" id="modeNote" hidden>מצב מקומי: הנתונים נשמרים רק בדפדפן הזה</span>
+      <button class="link" id="addClientBtn">➕ לקוח חדש</button>
       <button class="link" id="shareBtn" hidden>👥 שיתוף</button>
       <button class="link" id="logoutBtn">↩️ יציאה</button>
     </div>
@@ -65,13 +70,10 @@
     <div class="panel-head">
       <h2>📥 קליטת מסמכים <span class="page-client" id="pageClient"></span></h2>
       <div class="head-actions">
-        <label class="client-pick" id="clientPick">לקוח
-          <input id="defaultClient" list="clientList" placeholder="שם הלקוח" autocomplete="off">
+        <label class="client-pick" id="clientPick">שיוך ללקוח
+          <select id="uploadClient"></select>
         </label>
         <span class="client-fixed" id="clientFixed" hidden></span>
-        <label class="chk auto-save" title="מסמך שכל הפרטים שלו זוהו ואינו כפול נשמר מיד. השאר מחכים לבדיקה שלכם.">
-          <input type="checkbox" id="autoSave" checked> שמירה אוטומטית של מסמכים שזוהו במלואם</label>
-        <button class="primary" id="saveAllBtn" hidden>שמירת הכל</button>
       </div>
     </div>
     <div class="drop" id="drop">
@@ -79,7 +81,8 @@
       <input type="file" id="folderInput" webkitdirectory multiple hidden>
       <span class="drop-icon" aria-hidden="true">📄</span>
       <b>גוררים לכאן חשבוניות וקבלות, תיקייה שלמה או קובץ ZIP</b>
-      <span>PDF, תמונה (גם HEIC מאייפון), סריקת TIFF או Word. קובץ ZIP נפרס אוטומטית.</span>
+      <span>PDF, תמונה (גם HEIC מאייפון), סריקת TIFF או Word. קובץ ZIP נפרס אוטומטית.<br>
+        כל מסמך נשמר מיד אחרי שהוא נקרא. מסמך שחסרים בו פרטים או שיש בו ספק מסומן "לבדיקה".</span>
       <div class="drop-btns">
         <button type="button" class="primary" id="pickFiles">📄 בחירת קבצים / ZIP</button>
         <button type="button" class="ghost" id="pickFolder">📁 בחירת תיקייה</button>
@@ -91,7 +94,7 @@
 
   <main class="panel view-panel" data-view="docs">
     <div class="panel-head">
-      <h2>📋 מסמכים שנקלטו</h2>
+      <h2>📋 מסמכים <span class="page-client" id="pageClient2"></span></h2>
       <div class="head-actions"><button class="ghost" id="exportBtn">ייצוא לאקסל</button></div>
     </div>
     <div class="cards">
@@ -100,12 +103,12 @@
       <div class="card"><span>מע״מ</span><b id="sumVat">0</b></div>
       <div class="card main"><span>סה״כ כולל מע״מ</span><b id="sumTotal">0</b></div>
     </div>
-    <label class="dup-note" id="dupNote" hidden>
-      <input type="checkbox" id="dupOnly"> ⚠️ <b id="dupCount">0</b> מסמכים נראים כפולים. סמנו כדי להציג רק אותם.
+    <label class="dup-note" id="reviewNote" hidden>
+      <input type="checkbox" id="reviewOnly"> ⚠️ <b id="reviewCount">0</b> מסמכים מחכים לבדיקה (פרטים חסרים, ספק או כפילות אפשרית). סמנו כדי להציג רק אותם, ולחצו על מסמך כדי לראות ולתקן.
     </label>
     <div class="toolbar">
-      <input type="search" id="search" placeholder="חיפוש ספק, פירוט, מספר מסמך…">
-      <select id="clientFilter"><option value="">כל הלקוחות</option></select>
+      <input type="search" id="search" placeholder="חיפוש ספק, פירוט, מספר מסמך, קובץ…">
+      <select id="clientFilter"></select>
       <select id="catFilter"><option value="">כל סוגי השירות</option></select>
       <input type="month" id="monthFilter" title="חודש">
     </div>
@@ -129,9 +132,9 @@
 
   <main class="panel view-panel" data-view="summary">
     <div class="panel-head">
-      <h2>📊 סיכום</h2>
+      <h2>📊 סיכום <span class="page-client" id="pageClient3"></span></h2>
       <div class="head-actions">
-        <select id="sumClient"><option value="">כל הלקוחות</option></select>
+        <select id="sumClient"></select>
         <select id="sumYear"></select>
       </div>
     </div>
@@ -139,7 +142,6 @@
   </main>
 </div>
 
-<datalist id="clientList"></datalist>
 <datalist id="catList"></datalist>
 
 <dialog id="entryDlg" class="entry-dlg">
@@ -147,14 +149,16 @@
     <div class="dlg-grid">
       <div class="dlg-preview" id="dlgPreview"></div>
       <div>
-        <h2>עריכת מסמך</h2>
-        <p class="dup-warn" id="dlgDup" hidden></p>
+        <h2 id="dlgTitle">עריכת מסמך</h2>
+        <p class="dup-warn" id="dlgWhy" hidden></p>
         <div class="fields" id="dlgFields"></div>
+        <details class="raw" id="dlgFile"><summary>פרטי הקובץ</summary><pre id="dlgFileName"></pre></details>
         <div class="actions">
           <button type="button" class="danger" id="delBtn">מחיקה</button>
           <span class="grow"></span>
           <button type="button" class="ghost" id="cancelBtn">ביטול</button>
-          <button type="submit" class="primary">שמירה</button>
+          <button type="submit" class="ghost" value="save">💾 שמירה</button>
+          <button type="button" class="primary" id="approveBtn">✅ שמירה ואישור</button>
         </div>
       </div>
     </div>
@@ -179,6 +183,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=9"></script>
+<script type="module" src="app.js?v=10"></script>
 </body>
 </html>

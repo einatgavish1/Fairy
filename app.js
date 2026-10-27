@@ -1,5 +1,5 @@
 import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=5";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=6";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => (n < 0 ? "-" : "") + "₪" + Math.abs(n || 0).toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -49,38 +49,32 @@ if (CLOUD) {
       if (OWNER_EMAILS.includes(email)) return true;
       try { return (await fs.getDoc(fs.doc(db, "access", email.toLowerCase()))).exists(); } catch { return false; }
     },
-    watchClients: (cb) => fs.onSnapshot(fs.collection(db, "clients"), (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() })))),
+    watchClients: (cb, onErr) => fs.onSnapshot(fs.collection(db, "clients"), (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onErr),
     addClient: (name) => fs.addDoc(fs.collection(db, "clients"), { name, createdAt: fs.serverTimestamp(), createdBy: auth.currentUser.email }),
     watchAccess: (cb) => fs.onSnapshot(fs.collection(db, "access"), (snap) => cb(snap.docs.map((d) => d.id))),
     addAccess: (email) => fs.setDoc(fs.doc(db, "access", email), { addedAt: fs.serverTimestamp(), addedBy: auth.currentUser.email }),
     removeAccess: (email) => fs.deleteDoc(fs.doc(db, "access", email)),
   };
 } else {
-  const KEY = "fairy-docs", PKEY = "fairy-preview-";
+  const KEY = "fairy-docs", PKEY = "fairy-preview-", CKEY = "fairy-clients";
   const listeners = new Set(), clientListeners = new Set();
-  const read = () => { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } };
-  const write = (all) => { localStorage.setItem(KEY, JSON.stringify(all)); listeners.forEach((cb) => cb(read())); };
+  const readJson = (k) => { try { return JSON.parse(localStorage.getItem(k)) || []; } catch { return []; } };
+  const write = (all) => { localStorage.setItem(KEY, JSON.stringify(all)); listeners.forEach((cb) => cb(readJson(KEY))); };
   store = {
-    watch(cb) { listeners.add(cb); cb(read()); return () => listeners.delete(cb); },
+    watch(cb) { listeners.add(cb); cb(readJson(KEY)); return () => listeners.delete(cb); },
     async add(rec, preview) {
       const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-      write([...read(), { ...rec, id, createdAt: new Date().toISOString() }]);
+      write([...readJson(KEY), { ...rec, id, createdAt: new Date().toISOString() }]);
       try { if (preview) localStorage.setItem(PKEY + id, preview); } catch { /* the browser's space is small; keep the details anyway */ }
       return id;
     },
-    async update(id, rec) { write(read().map((r) => (r.id === id ? { ...r, ...rec } : r))); },
-    async remove(id) { localStorage.removeItem(PKEY + id); write(read().filter((r) => r.id !== id)); },
+    async update(id, rec) { write(readJson(KEY).map((r) => (r.id === id ? { ...r, ...rec } : r))); },
+    async remove(id) { localStorage.removeItem(PKEY + id); write(readJson(KEY).filter((r) => r.id !== id)); },
     async preview(id) { return localStorage.getItem(PKEY + id) || ""; },
-    watchClients(cb) {
-      const readClients = () => { try { return JSON.parse(localStorage.getItem("fairy-clients")) || []; } catch { return []; } };
-      clientListeners.add(() => cb(readClients()));
-      cb(readClients());
-    },
+    watchClients(cb) { const f = () => cb(readJson(CKEY)); clientListeners.add(f); f(); return () => clientListeners.delete(f); },
     async addClient(name) {
-      let all = [];
-      try { all = JSON.parse(localStorage.getItem("fairy-clients")) || []; } catch {}
-      localStorage.setItem("fairy-clients", JSON.stringify([...all, { id: Date.now().toString(36), name }]));
-      clientListeners.forEach((cb) => cb());
+      localStorage.setItem(CKEY, JSON.stringify([...readJson(CKEY), { id: Date.now().toString(36), name }]));
+      clientListeners.forEach((f) => f());
     },
   };
 }
@@ -93,21 +87,11 @@ const ALL = "*";
 let client = null;
 const inScope = (r) => client === ALL || r.client === client;
 
-function layered(el, depth = 10) {
-  el.innerHTML = [...el.textContent].map((ch, i) => ch === " "
-    ? '<span class="sp"> </span>'
-    : `<span class="L" style="--i:${i}">${Array.from({ length: depth }, (_, k) =>
-        `<b style="--k:${k}"${k ? ' aria-hidden="true"' : ""}>${ch}</b>`).join("")}</span>`).join("");
-}
-layered($("fairyText"), 14);
-layered($("sloganText"));
-
 function showLogin(err = "") {
   if (unsub) { unsub(); unsub = null; }
   if (unsubClients) { unsubClients(); unsubClients = null; }
-  $("clientView").hidden = true;
   $("loginErr").textContent = err;
-  $("appView").hidden = true;
+  $("appView").hidden = $("clientView").hidden = true;
   $("loginView").hidden = false;
 }
 
@@ -120,84 +104,10 @@ function enterApp() {
   const denied = (err) => showLogin(err.code === "permission-denied"
     ? `לחשבון ${user.email} אין הרשאה. בקשו מהבעלים לשתף אתכם.`
     : "שגיאה בטעינת הנתונים: " + err.message);
-  unsub = store.watch((all) => { records = all; renderAll(); renderClients(); }, denied);
-  unsubClients = store.watchClients((all) => { clients = all; renderAll(); renderClients(); }, denied);
+  unsub = store.watch((all) => { records = all; renderAll(); }, denied);
+  unsubClients = store.watchClients((all) => { clients = all; renderAll(); }, denied);
   showClients();
 }
-
-// ---------- choosing the client ----------
-// After signing in, and whenever "החלפת לקוח" is pressed: every client with how many documents
-// they have, a box to add a new one, and "all clients" to see everything together.
-
-const clientNames = () => [...new Set([...clients.map((c) => c.name), ...records.map((r) => r.client)].filter(Boolean))]
-  .sort((a, b) => a.localeCompare(b, "he"));
-
-function showClients() {
-  $("appView").hidden = true;
-  $("clientView").hidden = false;
-  $("clientSearch").value = "";
-  renderClients();
-  $("clientSearch").focus();
-}
-
-function renderClients() {
-  if ($("clientView").hidden) return;
-  const q = $("clientSearch").value.trim();
-  let last = "";
-  try { last = localStorage.getItem("fairy-last-client") || ""; } catch {}
-  const stats = (name) => {
-    const mine = name === ALL ? records : records.filter((r) => r.client === name);
-    const latest = mine.map((r) => r.date).filter(Boolean).sort().pop();
-    return `${mine.length} מסמכים${latest ? ` · אחרון ${showDate(latest)}` : ""}`;
-  };
-  const card = (name, label, cls = "") => `<button class="client-card${cls}${name === last ? " last" : ""}" data-name="${esc(name)}">
-      <b>${label}</b><small>${stats(name)}</small>${name === last ? '<span class="tag">אחרון</span>' : ""}</button>`;
-  const names = clientNames().filter((n) => !q || n.includes(q));
-  $("clientGrid").innerHTML = (q ? "" : card(ALL, "📚 כל הלקוחות", " all"))
-    + names.map((n) => card(n, `👤 ${esc(n)}`)).join("")
-    + (q && !names.includes(q) ? `<p class="soon">אין לקוח בשם "${esc(q)}". אפשר להוסיף אותו למטה.</p>` : "")
-    + (!q && !names.length ? '<p class="soon">עוד אין לקוחות. מוסיפים את הראשון למטה.</p>' : "");
-  $("clientGrid").querySelectorAll(".client-card").forEach((b) => (b.onclick = () => chooseClient(b.dataset.name)));
-}
-$("clientSearch").addEventListener("input", () => {
-  renderClients();
-  $("newClientName").value = $("clientSearch").value.trim();
-});
-$("clientSearch").addEventListener("keydown", (e) => {
-  if (e.key !== "Enter") return;
-  const first = $("clientGrid").querySelector(".client-card");
-  if (first) first.click();
-});
-$("newClientForm").onsubmit = async (e) => {
-  e.preventDefault();
-  const name = $("newClientName").value.trim().replace(/\s+/g, " ");
-  if (!name) return;
-  if (!clientNames().includes(name)) {
-    try { await store.addClient(name); }
-    catch (err) { toast("ההוספה נכשלה: " + err.message); return; }
-  }
-  $("newClientName").value = "";
-  chooseClient(name);
-};
-
-function chooseClient(name) {
-  client = name;
-  try { localStorage.setItem("fairy-last-client", name); } catch {}
-  const all = name === ALL;
-  $("curClient").textContent = all ? "כל הלקוחות" : name;
-  $("pageClient").textContent = all ? "" : `· ${name}`;
-  // With one client chosen, everything belongs to them; with all, each document says whose it is.
-  $("defaultClient").value = all ? "" : name;
-  $("clientPick").hidden = !all;
-  $("clientFixed").hidden = all;
-  $("clientFixed").innerHTML = all ? "" : `המסמכים יישמרו ללקוח: <b>${esc(name)}</b>`;
-  $("clientFilter").hidden = $("sumClient").hidden = !all;
-  $("clientFilter").value = $("sumClient").value = "";
-  $("clientView").hidden = true;
-  $("appView").hidden = false;
-  renderAll();
-}
-$("switchClient").onclick = showClients;
 
 const AUTH_ERRORS = {
   "auth/popup-closed-by-user": "חלון הכניסה נסגר לפני שהכניסה הסתיימה. נסו שוב.",
@@ -247,6 +157,84 @@ if (CLOUD) {
   setTimeout(enterApp); // after the rest of this module has set up
 }
 
+// ---------- clients ----------
+// After signing in a dropdown of the clients (with how many documents each has and how many wait
+// for review); the same dropdown sits in the side menu to switch at any time.
+
+const clientNames = () => [...new Set([...clients.map((c) => c.name), ...records.map((r) => r.client)].filter(Boolean))]
+  .sort((a, b) => a.localeCompare(b, "he"));
+const lastClient = () => { try { return localStorage.getItem("fairy-last-client") || ""; } catch { return ""; } };
+const needsReview = (r) => r.status === "review" || r.status === "failed" || dupOf.has(r.id);
+
+function clientOptions(selected) {
+  const label = (name) => {
+    const mine = name === ALL ? records : records.filter((r) => r.client === name);
+    const review = mine.filter(needsReview).length;
+    return `${mine.length} מסמכים${review ? `, ${review} לבדיקה` : ""}`;
+  };
+  const opt = (value, text) => `<option value="${esc(value)}"${value === selected ? " selected" : ""}>${esc(text)}</option>`;
+  const unassigned = records.filter((r) => !r.client).length;
+  return opt(ALL, `📚 כל הלקוחות (${label(ALL)})`)
+    + clientNames().map((n) => opt(n, `${n} (${label(n)})`)).join("")
+    + (unassigned ? opt("", `❓ לא שויכו ללקוח (${unassigned})`) : "");
+}
+
+function showClients() {
+  $("appView").hidden = true;
+  $("clientView").hidden = false;
+  renderClientPickers();
+  $("clientSelect").focus();
+}
+
+function renderClientPickers() {
+  const pick = $("clientView").hidden ? client : (client ?? (lastClient() || ALL));
+  $("clientSelect").innerHTML = clientOptions(pick);
+  if (client !== null) $("navClient").innerHTML = clientOptions(client);
+  // Upload with "all clients": each document goes to the client named on it, or to one picked here.
+  $("uploadClient").innerHTML = '<option value="">🔎 לפי שם הלקוח שבמסמך</option>'
+    + clientNames().map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+}
+
+$("clientForm").onsubmit = (e) => { e.preventDefault(); chooseClient($("clientSelect").value); };
+$("navClient").onchange = () => chooseClient($("navClient").value);
+
+async function addClient(name) {
+  name = name.trim().replace(/\s+/g, " ");
+  if (!name) return false;
+  if (!clientNames().includes(name)) {
+    try { await store.addClient(name); }
+    catch (err) { toast("ההוספה נכשלה: " + err.message); return false; }
+  }
+  return name;
+}
+$("newClientForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const name = await addClient($("newClientName").value);
+  if (!name) return;
+  $("newClientName").value = "";
+  chooseClient(name);
+};
+$("addClientBtn").onclick = async () => {
+  const name = await addClient(prompt("שם הלקוח החדש:") || "");
+  if (name) chooseClient(name);
+};
+
+function chooseClient(name) {
+  client = name;
+  try { localStorage.setItem("fairy-last-client", name); } catch {}
+  const all = name === ALL;
+  const title = all ? "" : `· ${name || "לא שויכו ללקוח"}`;
+  $("pageClient").textContent = $("pageClient2").textContent = $("pageClient3").textContent = title;
+  $("clientPick").hidden = !all;
+  $("clientFixed").hidden = all;
+  $("clientFixed").innerHTML = all ? "" : `המסמכים יישמרו ללקוח: <b>${esc(name || "ללא שיוך")}</b>`;
+  $("clientFilter").hidden = $("sumClient").hidden = !all;
+  $("clientFilter").value = $("sumClient").value = "";
+  $("clientView").hidden = true;
+  $("appView").hidden = false;
+  renderAll();
+}
+
 // ---------- menu ----------
 
 function showView(name) {
@@ -258,12 +246,13 @@ document.querySelectorAll("#sideNav > button[data-view]").forEach((b) => (b.oncl
 // ---------- the form fields of a document ----------
 
 const FIELDS = [
-  { k: "client", label: "לקוח", list: "clientList" },
+  { k: "client", label: "לקוח", options: () => clientNames() },
+  { k: "customer", label: "שם הלקוח כפי שמופיע במסמך" },
   { k: "date", label: "תאריך", type: "date", need: true },
   { k: "supplier", label: "ספק", need: true },
   { k: "supplierId", label: "ח.פ / ע.מ" },
   { k: "category", label: "סוג שירות", list: "catList", need: true },
-  { k: "docType", label: "סוג מסמך", options: DOC_TYPE_NAMES },
+  { k: "docType", label: "סוג מסמך", options: () => DOC_TYPE_NAMES },
   { k: "docNo", label: "מספר מסמך" },
   { k: "amount", label: "סכום כולל מע״מ (₪)", type: "number", need: true },
   { k: "vat", label: "מע״מ (₪)", type: "number" },
@@ -273,9 +262,14 @@ const FIELDS = [
 function fieldsHtml(v) {
   return FIELDS.map((f) => {
     const val = v[f.k] ?? "";
-    const input = f.options
-      ? `<select name="${f.k}"><option value=""></option>${f.options.map((o) => `<option${o === val ? " selected" : ""}>${o}</option>`).join("")}</select>`
-      : `<input name="${f.k}" type="${f.type || "text"}" value="${esc(val)}"${f.list ? ` list="${f.list}" autocomplete="off"` : ""}${f.type === "number" ? ' step="0.01" inputmode="decimal" dir="ltr"' : ""}>`;
+    let input;
+    if (f.options) {
+      const list = f.options();
+      const all = val && !list.includes(val) ? [val, ...list] : list;
+      input = `<select name="${f.k}"><option value=""></option>${all.map((o) => `<option${o === val ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+    } else {
+      input = `<input name="${f.k}" type="${f.type || "text"}" value="${esc(val)}"${f.list ? ` list="${f.list}" autocomplete="off"` : ""}${f.type === "number" ? ' step="0.01" inputmode="decimal" dir="ltr"' : ""}>`;
+    }
     return `<label class="${f.wide ? "wide " : ""}${f.need && (val === "" || val == null) ? "miss" : ""}" data-need="${f.need ? 1 : ""}">${f.label}${input}</label>`;
   }).join("") + '<span class="calc"></span>';
 }
@@ -304,11 +298,11 @@ function readFields(box) {
 // same supplier with the same document number, or the same supplier, date and amount.
 
 const normName = (s) => String(s || "").replace(/[^\p{L}\d]/gu, "").replace(/בעמ$|ltd$/i, "");
-function sameSupplier(a, b) {
-  if (a.supplierId && a.supplierId === b.supplierId) return true;
-  const x = normName(a.supplier), y = normName(b.supplier);
+const sameName = (a, b) => {
+  const x = normName(a), y = normName(b);
   return x.length >= 2 && y.length >= 2 && (x.includes(y) || y.includes(x));
-}
+};
+const sameSupplier = (a, b) => (a.supplierId && a.supplierId === b.supplierId) || sameName(a.supplier, b.supplier);
 // Why two records look like the same document ("" when they don't).
 function dupReason(a, b) {
   if (a.fileHash && a.fileHash === b.fileHash) return "אותו קובץ בדיוק";
@@ -316,20 +310,17 @@ function dupReason(a, b) {
   if (a.amount && a.amount === b.amount && a.date && a.date === b.date && sameSupplier(a, b)) return "אותו ספק, תאריך וסכום";
   return "";
 }
-const describe = (x) => [x.supplier, showDate(x.date), x.amount ? fmt(x.amount) : "", x.fileName].filter(Boolean).join(" · ");
+const describe = (x) => [x.client, x.supplier, showDate(x.date), x.amount ? fmt(x.amount) : "", x.fileName].filter(Boolean).join(" · ");
 
-// A saved record, or a file that came earlier in this upload, that looks like the same document
-// (only earlier ones, so of two copies just the second is flagged).
-function findDuplicate(r, { exceptId, exceptItem } = {}) {
-  for (const x of records) {
-    const why = x.id !== exceptId && dupReason(r, x);
-    if (why) return { why, what: `כבר נקלט: ${describe(x)}` };
-  }
-  for (const it of pending) {
-    if (it === exceptItem || !it.rec || (exceptItem && it.seq > exceptItem.seq)) continue;
-    const x = it.rec();
+// Saved this session but maybe not yet back from the database, so a copy right behind it is still caught.
+const savedNow = [];
+function findDuplicate(r, exceptId) {
+  const seen = new Set();
+  for (const x of [...records, ...savedNow]) {
+    if (x.id === exceptId || seen.has(x.id)) continue;
+    seen.add(x.id);
     const why = dupReason(r, x);
-    if (why) return { why, what: `מופיע גם בהעלאה הזו: ${describe(x)}` };
+    if (why) return { why, what: describe(x), id: x.id };
   }
   return null;
 }
@@ -337,6 +328,22 @@ function findDuplicate(r, { exceptId, exceptItem } = {}) {
 async function fingerprint(file) {
   const hash = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
   return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ---------- what needs a person to look at it ----------
+
+// The reasons a record should be checked by hand ([] when it is fine).
+function reviewReasons(r, { exceptId, noText = false, failed = "" } = {}) {
+  const why = [];
+  if (failed) why.push(`הקובץ לא נקרא (${failed})`);
+  else if (noText) why.push("לא נמצא טקסט במסמך");
+  const missing = FIELDS.filter((f) => f.need && !r[f.k]).map((f) => f.label.replace(/ \(.*\)/, ""));
+  if (missing.length && !failed) why.push(`חסר: ${missing.join(", ")}`);
+  if (!r.client) why.push(r.customer ? `הלקוח "${r.customer}" שבמסמך לא נמצא ברשימת הלקוחות` : "לא שויך ללקוח");
+  else if (r.customer && !sameName(r.customer, r.client)) why.push(`במסמך כתוב לקוח אחר: "${r.customer}"`);
+  const dup = findDuplicate(r, exceptId);
+  if (dup) why.push(`ייתכן כפילות (${dup.why}) של: ${dup.what}`);
+  return why;
 }
 
 // ---------- intake ----------
@@ -359,8 +366,10 @@ drop.addEventListener("drop", (e) => {
 // Pasting a screenshot (Ctrl+V) works too.
 document.addEventListener("paste", (e) => {
   const files = [...(e.clipboardData?.files || [])];
-  if (files.length && !$("appView").hidden) { showView("upload"); addFiles(files); }
+  if (files.length && !$("appView").hidden) addFiles(files);
 });
+// Closing the page while files are still being read loses the ones not read yet: ask first.
+addEventListener("beforeunload", (e) => { if (prog.done < prog.total) { e.preventDefault(); e.returnValue = ""; } });
 
 // A dragged file or folder -> [{ file, path }].
 async function readEntry(entry) {
@@ -431,27 +440,6 @@ async function collect({ file, path }, out, missed) {
   else out.push({ file, path });
 }
 
-const pending = new Set();
-const unsaved = () => [...pending].filter((it) => it.ready);
-function syncSaveAll() {
-  const n = unsaved().length;
-  $("saveAllBtn").hidden = n < 2;
-  $("saveAllBtn").textContent = `💾 שמירת כל ${n} הממתינים`;
-  renderProgress();
-}
-// Saves every document waiting for it, except possible duplicates and ones missing both supplier and amount.
-async function saveAll() {
-  let saved = 0, left = 0;
-  for (const it of unsaved()) (await it.save({ bulk: true })) ? saved++ : left++;
-  toast(left ? `נשמרו ${saved}. ${left} נשארו לבדיקה (כפילות אפשרית או פרטים חסרים)` : `נשמרו ${saved} מסמכים`);
-}
-$("saveAllBtn").onclick = saveAll;
-$("progMain").addEventListener("click", (e) => { if (e.target.closest(".save-all")) saveAll(); });
-// Leaving the page with documents that were read but not saved loses them: ask first.
-addEventListener("beforeunload", (e) => { if (unsaved().length) { e.preventDefault(); e.returnValue = ""; } });
-try { $("autoSave").checked = localStorage.getItem("fairy-autosave") !== "0"; } catch {}
-$("autoSave").onchange = () => { try { localStorage.setItem("fairy-autosave", $("autoSave").checked ? "1" : "0"); } catch {} };
-
 async function addFiles(list) {
   if (!list.length) return;
   showView("upload");
@@ -477,12 +465,11 @@ async function addFiles(list) {
 // ---------- progress of the whole upload ----------
 // One panel for everything being read: how many are done, roughly how long is left, how the
 // finished ones came out, and a list of every file that was not taken in and why.
-// A single file with nothing left out needs only its own bar.
 
 const TITLE = document.title;
 const prog = { total: 0, done: 0, missed: [] };
 function progReset() {
-  Object.assign(prog, { total: 0, done: 0, ready: 0, check: 0, dup: 0, failed: 0, saved: 0, started: Date.now(), ended: 0, share: new Map(), missed: [] });
+  Object.assign(prog, { total: 0, done: 0, ok: 0, review: 0, skipped: 0, failed: 0, started: Date.now(), ended: 0, share: new Map(), missed: [] });
   renderMissed();
 }
 function progStart(n) {
@@ -498,11 +485,6 @@ function progDone(item, kind) {
   prog[kind]++;
   if (prog.done >= prog.total) prog.ended = Date.now();
   renderProgress();
-}
-function progFailed(item, path, why) {
-  prog.missed.push({ path, why });
-  renderMissed();
-  progDone(item, "failed");
 }
 
 // A line in the panel that stays until there is progress to show.
@@ -529,22 +511,27 @@ function renderProgress() {
     const finished = prog.done >= prog.total;
     const elapsed = (finished ? prog.ended : Date.now()) - prog.started;
     const rest = (elapsed / frac) * (1 - frac);
-    const waiting = unsaved().length;
     const left = finished ? "" : frac < 0.03 ? "מחשב כמה זמן זה ייקח…" : rest < 60000 ? "נשארה פחות מדקה" : `נשארו עוד כ-${minutes(rest)}`;
     box.hidden = false;
     box.className = "progress" + (finished ? " finished" : "");
     $("progMain").innerHTML = `<div class="prog-head">
-        <b>${finished ? `✨ הקריאה הסתיימה: ${prog.total} מסמכים תוך ${minutes(elapsed)}` : `קורא מסמכים: ${prog.done} מתוך ${prog.total}`}</b>
+        <b>${finished ? `✨ הקליטה הסתיימה: ${prog.total} מסמכים תוך ${minutes(elapsed)}` : `קולט מסמכים: ${prog.done} מתוך ${prog.total}`}</b>
         <span class="grow">${left}</span><b class="pct">${pct}%</b></div>
       <div class="bar"><i style="width:${frac * 100}%"></i></div>
-      <div class="prog-chips">${chip("💾", prog.saved, "נשמרו")}${chip("✏️", prog.check, "חסרים פרטים")}${chip("⚠️", prog.dup, "כפולים")}${chip("❌", prog.failed, "לא נקראו")}</div>
-      ${waiting ? `<div class="prog-wait"><b>⏳ ${waiting} מסמכים נקראו ועוד לא נשמרו.</b> הם יישמרו רק אחרי לחיצה על שמירה.
-        <button type="button" class="primary save-all">💾 שמירת כל ${waiting} הממתינים</button></div>` : ""}`;
+      <div class="prog-chips">${chip("✅", prog.ok, "נשמרו")}${chip("⚠️", prog.review, "נשמרו לבדיקה")}${chip("⏭️", prog.skipped, "דולגו (כבר קיימים)")}${chip("❌", prog.failed, "לא נשמרו")}</div>
+      ${finished && prog.review ? '<button type="button" class="primary to-review">⚠️ למסמכים שמחכים לבדיקה</button>' : ""}`;
     document.title = finished ? TITLE : `(${pct}%) ${TITLE}`;
   });
 }
 // While files are being read the time left keeps counting down even between steps.
 setInterval(() => { if (prog.done < prog.total) renderProgress(); }, 5000);
+$("progMain").addEventListener("click", (e) => { if (e.target.closest(".to-review")) showReview(); });
+
+function showReview() {
+  $("reviewOnly").checked = true;
+  renderTable();
+  showView("docs");
+}
 
 // The files that were not taken in, each with its reason; kept apart from the progress
 // so the list stays open while the progress above it updates.
@@ -574,114 +561,92 @@ async function oneAtATime(fn) {
   finally { reading--; waitingToRead.shift()?.(); }
 }
 
-let itemSeq = 0;
+// The client a new document belongs to: the one being worked on, the one picked for this upload,
+// or (with "all clients") the known client whose name appears on the document.
+function clientFor(customer) {
+  if (client && client !== ALL) return client;
+  if ($("uploadClient").value) return $("uploadClient").value;
+  return (customer && clientNames().find((n) => sameName(n, customer))) || "";
+}
+
+// Hashes being read right now, so a second copy in the same upload is caught before it is saved.
+const inFlight = new Map();
+
+// Each file: read it, find the details, and save it straight away, marked for review when
+// anything is missing or doubtful. Only an exact copy of a file already in the system is skipped.
 async function processFile(file, path, batch) {
   const el = document.createElement("div");
   el.className = "item";
-  el.innerHTML = `<div class="thumb"><span class="soon">⏳</span><span class="fname">${esc(path)}</span></div>
-    <div class="body"><div class="status"><span class="label">ממתין…</span><div class="bar"><i></i></div></div></div>`;
+  el.innerHTML = `<div class="thumb"><span class="soon">⏳</span></div>
+    <div class="body"><span class="fname">${esc(path)}</span><div class="status"><span class="label">ממתין…</span><div class="bar"><i></i></div></div></div>`;
   batch.append(el);
+  const body = el.querySelector(".body");
   const status = (p, label) => {
     el.querySelector(".bar i").style.width = Math.round(p * 100) + "%";
     if (label) el.querySelector(".label").textContent = label;
     progStep(item, p);
   };
-  const item = { ready: false, seq: ++itemSeq };
-  pending.add(item);
+  const item = {};
   progStep(item, 0);
-  try {
-    // The very same file again: say so at once, before spending time on reading it.
-    item.hash = await fingerprint(file);
-    const same = findDuplicate({ fileHash: item.hash }, { exceptItem: item });
-    item.rec = () => ({ fileHash: item.hash, fileName: path });
-    if (same) {
-      toast(`⚠️ כפילות: ${path}`);
-      progDone(item, "dup");
-      el.classList.add("dup");
-      el.querySelector(".body").innerHTML = `<p class="dup-warn">⚠️ <b>הקובץ הזה כבר הועלה</b> (${same.why}).<br>${esc(same.what)}</p>
-        <div class="item-actions"><button class="primary drop-it">הסרה</button><button class="ghost go-on">לקלוט בכל זאת</button></div>`;
-      const goOn = await new Promise((ok) => {
-        el.querySelector(".drop-it").onclick = () => ok(false);
-        el.querySelector(".go-on").onclick = () => ok(true);
-      });
-      if (!goOn) { pending.delete(item); el.remove(); syncSaveAll(); return; }
-      prog.total++;
-      item.counted = false;
-      el.querySelector(".body").innerHTML = '<div class="status"><span class="label">ממתין…</span><div class="bar"><i></i></div></div>';
-    }
-    const { text, preview, ocr } = await oneAtATime(() => readFile(file, status));
-    const thumb = el.querySelector(".thumb");
-    thumb.innerHTML = `${preview ? `<img src="${preview}" alt="">` : '<span class="soon">אין תצוגה</span>'}<span class="fname">${esc(path)}</span>`;
-    thumb.onclick = () => preview && zoom(preview);
-    const found = { client: client && client !== ALL ? client : $("defaultClient").value.trim(), ...parseText(text) };
-    const missing = FIELDS.filter((f) => f.need && !found[f.k]).length;
-    el.querySelector(".body").innerHTML = `
-      <p class="dup-warn" hidden></p>
-      <div class="fields">${fieldsHtml(found)}</div>
-      <div class="item-actions">
-        <button class="primary save">שמירה</button>
-        <button class="ghost drop-it">הסרה</button>
-        <span class="note">${!text.trim() ? "⚠️ לא נמצא טקסט במסמך. אפשר למלא ידנית." : missing ? `זוהו רוב הפרטים, ${missing} חסרים (מסומנים בצהוב)` : "✨ כל הפרטים זוהו. כדאי להציץ ולוודא."}</span>
-      </div>
-      <details class="raw"><summary>הטקסט שזוהה${ocr ? " (זיהוי מתמונה)" : ""}</summary><pre>${esc(text)}</pre></details>`;
-    const box = el.querySelector(".fields");
-    bindFields(box);
-    item.rec = () => ({ ...readFields(box), fileHash: item.hash, fileName: path });
-    // Same document by its details (another scan or photo of it): a warning that follows the edits.
-    const warn = el.querySelector(".dup-warn");
-    const checkDup = () => {
-      const dup = findDuplicate(item.rec(), { exceptItem: item });
-      warn.hidden = !dup;
-      el.classList.toggle("dup", !!dup);
-      if (dup) warn.innerHTML = `⚠️ <b>ייתכן שזו כפילות</b> (${dup.why}).<br>${esc(dup.what)}`;
-      return dup;
-    };
-    box.addEventListener("input", checkDup);
-    const dupNow = checkDup();
-    if (dupNow) toast(`⚠️ ייתכן שזו כפילות: ${path}`);
-    const outcome = dupNow ? "dup" : missing || !text.trim() ? "check" : "ready";
-    progDone(item, outcome);
-    item.ready = true;
-    // bulk: saving many at once, where a possible duplicate or a document without supplier
-    // and amount is left for the person to look at instead of asking about each one.
-    item.save = async ({ bulk = false } = {}) => {
-      const rec = item.rec();
-      if (!rec.amount && !rec.supplier) { if (!bulk) toast("חסרים ספק וסכום"); return false; }
-      const dup = findDuplicate(rec, { exceptItem: item });
-      if (dup && (bulk || !confirm(`ייתכן שזו כפילות (${dup.why}).\n${dup.what}\n\nלשמור בכל זאת?`))) return false;
-      const btn = el.querySelector(".save");
-      btn.disabled = true;
-      try {
-        await store.add(rec, preview);
-        warn.hidden = true;
-        el.classList.remove("dup");
-        pending.delete(item);
-        item.ready = false;
-        el.classList.add("saved");
-        prog.saved++;
-        renderProgress();
-        box.querySelectorAll("input,select").forEach((i) => (i.disabled = true));
-        el.querySelector(".item-actions").innerHTML = '<span class="saved-note">✓ נשמר</span><button class="ghost drop-it">הסתרה</button>';
-        el.querySelector(".drop-it").onclick = () => el.remove();
-        syncSaveAll();
-        return true;
-      } catch (e) {
-        btn.disabled = false;
-        toast("השמירה נכשלה: " + e.message);
-        return false;
-      }
-    };
-    el.querySelector(".save").onclick = () => item.save();
-    // Fully read and not a duplicate: saved right away when automatic saving is on.
-    if (outcome === "ready" && $("autoSave").checked) await item.save({ bulk: true });
-    el.querySelector(".drop-it").onclick = () => { pending.delete(item); el.remove(); syncSaveAll(); };
-  } catch (e) {
-    pending.delete(item);
-    progFailed(item, path, e.message || "שגיאה בקריאה");
-    el.querySelector(".body").innerHTML = `<p class="err">לא הצלחתי לקרוא את ${esc(path)}: ${esc(e.message)}</p><button class="ghost drop-it">הסרה</button>`;
-    el.querySelector(".drop-it").onclick = () => el.remove();
+  const show = (cls, html, actions = "") => {
+    el.className = `item ${cls}`;
+    body.innerHTML = `<span class="fname">${esc(path)}</span><div class="result">${html}</div>${actions ? `<div class="item-actions">${actions}</div>` : ""}`;
+  };
+
+  let hash;
+  try { hash = await fingerprint(file); } catch { hash = ""; }
+  const sameFile = hash && (inFlight.get(hash) || findDuplicate({ fileHash: hash })?.what);
+  if (sameFile) {
+    progDone(item, "skipped");
+    show("dup", `⏭️ <b>דולג: הקובץ הזה כבר קיים במערכת</b><br><small>${esc(sameFile)}</small>`, '<button class="ghost go-on">לקלוט בכל זאת</button>');
+    const goOn = await new Promise((ok) => (el.querySelector(".go-on").onclick = () => ok(true)));
+    if (!goOn) return;
+    prog.total++;
+    item.counted = false;
+    body.innerHTML = '<div class="status"><span class="label">ממתין…</span><div class="bar"><i></i></div></div>';
   }
-  syncSaveAll();
+  if (hash) inFlight.set(hash, path);
+
+  // Read; a file that can't be read is still saved, so it can be opened and filled in by hand.
+  let text = "", preview = "", failed = "";
+  try {
+    ({ text, preview } = await oneAtATime(() => readFile(file, status)));
+  } catch (e) {
+    failed = e.message || "שגיאה בקריאה";
+  }
+  if (preview) {
+    el.querySelector(".thumb").innerHTML = `<img src="${preview}" alt="">`;
+    el.querySelector(".thumb").onclick = () => zoom(preview);
+  } else {
+    el.querySelector(".thumb").innerHTML = '<span class="soon">📄</span>';
+  }
+  const found = failed ? {} : parseText(text);
+  const rec = {
+    client: clientFor(found.customer), customer: found.customer || "",
+    date: found.date || "", supplier: found.supplier || "", supplierId: found.supplierId || "",
+    category: found.category || "", docType: found.docType || "", docNo: found.docNo || "",
+    amount: found.amount ?? null, vat: found.vat ?? null, details: found.details || "",
+    fileName: path, fileHash: hash,
+  };
+  const why = reviewReasons(rec, { noText: !failed && !text.trim(), failed });
+  rec.status = failed ? "failed" : why.length ? "review" : "ok";
+  rec.reviewWhy = why.join(" · ");
+
+  try {
+    const id = await store.add(rec, preview);
+    savedNow.push({ ...rec, id });
+    inFlight.delete(hash);
+    progDone(item, rec.status === "ok" ? "ok" : "review");
+    const summary = [rec.client || "ללא לקוח", rec.supplier, showDate(rec.date), rec.amount ? fmt(rec.amount) : ""].filter(Boolean).map(esc).join(" · ");
+    const open = `<button class="${rec.status === "ok" ? "ghost" : "primary"} open-it">${rec.status === "ok" ? "פתיחה" : "פתיחה ובדיקה"}</button>`;
+    if (rec.status === "ok") show("saved", `✅ <b>נשמר</b> · ${summary}`, open);
+    else show("review", `⚠️ <b>נשמר לבדיקה</b> · ${summary}<br><small>${esc(rec.reviewWhy)}</small>`, open);
+    el.querySelector(".open-it").onclick = () => openEntry(id, rec);
+  } catch (e) {
+    inFlight.delete(hash);
+    progDone(item, "failed");
+    show("failed", `❌ <b>השמירה נכשלה</b> · ${esc(e.message)}`);
+  }
 }
 
 function zoom(src) {
@@ -692,8 +657,7 @@ function zoom(src) {
 // ---------- documents list ----------
 
 let sortDir = -1;
-const filters = ["search", "clientFilter", "catFilter", "monthFilter", "dupOnly"];
-filters.forEach((id) => $(id).addEventListener("input", renderTable));
+["search", "clientFilter", "catFilter", "monthFilter", "reviewOnly"].forEach((id) => $(id).addEventListener("input", renderTable));
 document.querySelector("th.sort").onclick = () => { sortDir = -sortDir; renderTable(); };
 
 function fillSelect(sel, values, allLabel) {
@@ -703,18 +667,25 @@ function fillSelect(sel, values, allLabel) {
 }
 
 function renderAll() {
-  const clients = clientNames();
+  markDuplicates();
+  renderClientPickers();
+  if (client === null) return;
+  const names = clientNames();
   const cats = [...new Set([...CATEGORY_NAMES, ...records.map((r) => r.category).filter(Boolean)])];
-  $("clientList").innerHTML = clients.map((c) => `<option value="${esc(c)}">`).join("");
   $("catList").innerHTML = cats.map((c) => `<option value="${esc(c)}">`).join("");
-  fillSelect($("clientFilter"), clients, "כל הלקוחות");
-  fillSelect($("sumClient"), clients, "כל הלקוחות");
-  fillSelect($("catFilter"), [...new Set(records.map((r) => r.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, "he")), "כל סוגי השירות");
-  const years = [...new Set(records.map((r) => (r.date || "").slice(0, 4)).filter(Boolean))].sort().reverse();
+  fillSelect($("clientFilter"), names, "כל הלקוחות");
+  fillSelect($("sumClient"), names, "כל הלקוחות");
+  fillSelect($("catFilter"), [...new Set(records.filter(inScope).map((r) => r.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, "he")), "כל סוגי השירות");
+  const years = [...new Set(records.filter(inScope).map((r) => (r.date || "").slice(0, 4)).filter(Boolean))].sort().reverse();
   const curYear = $("sumYear").value;
   $("sumYear").innerHTML = years.map((y) => `<option>${y}</option>`).join("") || `<option>${new Date().getFullYear()}</option>`;
   if (years.includes(curYear)) $("sumYear").value = curYear;
-  markDuplicates();
+  const review = records.filter((r) => inScope(r) && needsReview(r)).length;
+  $("reviewNote").hidden = !review;
+  $("reviewCount").textContent = review;
+  $("reviewBadge").hidden = !review;
+  $("reviewBadge").textContent = review;
+  if (!review) $("reviewOnly").checked = false;
   renderTable();
   renderSummary();
 }
@@ -730,32 +701,35 @@ function markDuplicates() {
       dupOf.set(records[i].id, `${why}, כמו: ${describe(records[j])}`);
       dupOf.set(records[j].id, `${why}, כמו: ${describe(records[i])}`);
     }
-  const n = records.filter((r) => inScope(r) && dupOf.has(r.id)).length;
-  $("dupNote").hidden = !n;
-  $("dupCount").textContent = n;
-  if (!n) $("dupOnly").checked = false;
 }
 
 function filtered() {
   const q = $("search").value.trim().toLowerCase();
-  const client = $("clientFilter").value, cat = $("catFilter").value, month = $("monthFilter").value, dupOnly = $("dupOnly").checked;
-  return records.filter((r) => inScope(r) && (!dupOnly || dupOf.has(r.id)) &&
-    (!client || r.client === client) && (!cat || r.category === cat) && (!month || (r.date || "").startsWith(month)) &&
-    (!q || [r.supplier, r.supplierId, r.details, r.docNo, r.client, r.category, r.fileName].some((v) => String(v || "").toLowerCase().includes(q))))
+  const who = $("clientFilter").value, cat = $("catFilter").value, month = $("monthFilter").value, reviewOnly = $("reviewOnly").checked;
+  return records.filter((r) => inScope(r) && (!reviewOnly || needsReview(r)) &&
+    (!who || r.client === who) && (!cat || r.category === cat) && (!month || (r.date || "").startsWith(month)) &&
+    (!q || [r.supplier, r.supplierId, r.details, r.docNo, r.client, r.customer, r.category, r.fileName].some((v) => String(v || "").toLowerCase().includes(q))))
     .sort((a, b) => sortDir * (a.date || "").localeCompare(b.date || ""));
+}
+
+function statusTag(r) {
+  if (r.status === "failed") return `<span class="tag bad" title="${esc(r.reviewWhy)}">❌ לא נקרא</span> `;
+  if (r.status === "review") return `<span class="tag warn" title="${esc(r.reviewWhy)}">⚠️ לבדיקה</span> `;
+  if (dupOf.has(r.id)) return `<span class="tag warn" title="${esc(dupOf.get(r.id))}">⚠️ כפול</span> `;
+  return "";
 }
 
 function renderTable() {
   const rows = filtered();
   $("sortArrow").textContent = sortDir < 0 ? "▼" : "▲";
-  $("rows").innerHTML = rows.map((r) => `<tr data-id="${r.id}"${dupOf.has(r.id) ? ' class="dup"' : ""}>
+  $("rows").innerHTML = rows.map((r) => `<tr data-id="${r.id}"${needsReview(r) ? ' class="dup"' : ""}>
     <td class="num">${showDate(r.date)}</td>
-    <td>${esc(r.client)}</td>
-    <td>${dupOf.has(r.id) ? `<span class="tag dup-tag" title="${esc(dupOf.get(r.id))}">⚠️ כפול</span> ` : ""}${esc(r.supplier)}${r.details ? `<small>${esc(r.details)}</small>` : ""}</td>
+    <td>${esc(r.client) || '<span class="soon">ללא</span>'}</td>
+    <td>${statusTag(r)}${esc(r.supplier) || `<span class="soon">${esc(r.fileName)}</span>`}${r.details ? `<small>${esc(r.details)}</small>` : ""}</td>
     <td>${r.category ? `<span class="tag">${esc(r.category)}</span>` : ""}</td>
     <td>${esc(r.docType)}${r.docNo ? `<small>מס׳ ${esc(r.docNo)}</small>` : ""}</td>
     <td class="num">${r.vat ? fmt(r.vat) : ""}</td>
-    <td class="num">${fmt(r.amount)}</td></tr>`).join("");
+    <td class="num">${r.amount ? fmt(r.amount) : ""}</td></tr>`).join("");
   $("rows").querySelectorAll("tr").forEach((tr) => (tr.onclick = () => openEntry(tr.dataset.id)));
   const sum = (k) => round2(rows.reduce((s, r) => s + (r[k] || 0), 0));
   $("shownSum").textContent = fmt(sum("amount"));
@@ -764,32 +738,49 @@ function renderTable() {
   $("sumTotal").textContent = fmt(sum("amount"));
   $("sumVat").textContent = fmt(sum("vat"));
   $("sumNet").textContent = fmt(round2(sum("amount") - sum("vat")));
-  $("emptyMsg").hidden = records.length > 0;
+  $("emptyMsg").hidden = records.some(inScope);
 }
 
+// ---------- one document: see it, fix it, approve it ----------
+
 let editing = null;
-async function openEntry(id) {
-  const r = records.find((x) => x.id === id);
+async function openEntry(id, fallback) {
+  const r = records.find((x) => x.id === id) || (fallback && { ...fallback, id });
   if (!r) return;
   editing = id;
   const box = $("dlgFields");
   box.innerHTML = fieldsHtml(r);
   bindFields(box);
-  $("dlgDup").hidden = !dupOf.has(id);
-  $("dlgDup").textContent = dupOf.has(id) ? `⚠️ ייתכן שזו כפילות: ${dupOf.get(id)}` : "";
+  const why = [r.reviewWhy, dupOf.get(id) && `ייתכן כפילות: ${dupOf.get(id)}`].filter(Boolean).join(" · ");
+  $("dlgTitle").textContent = r.status === "failed" ? "מסמך שלא נקרא: מלאו ידנית" : needsReview(r) ? "מסמך לבדיקה" : "עריכת מסמך";
+  $("dlgWhy").hidden = !why;
+  $("dlgWhy").textContent = why ? `⚠️ ${why}` : "";
+  $("dlgFileName").textContent = r.fileName || "";
   $("dlgPreview").innerHTML = '<p class="soon">טוען תמונה…</p>';
   $("entryDlg").showModal();
   const src = await store.preview(id);
   if (editing !== id) return;
-  $("dlgPreview").innerHTML = src ? `<img src="${src}" alt="">` : '<p class="soon">אין תמונה שמורה</p>';
+  $("dlgPreview").innerHTML = src
+    ? `<img src="${src}" alt=""><small class="soon">לחיצה על התמונה מגדילה אותה</small>`
+    : `<p class="soon">אין תמונה של המסמך. פתחו את הקובץ המקורי:<br><b class="ltr-path">${esc(r.fileName)}</b></p>`;
   const img = $("dlgPreview").querySelector("img");
   if (img) img.onclick = () => zoom(src);
 }
-$("entryForm").onsubmit = async (e) => {
-  e.preventDefault();
-  try { await store.update(editing, readFields($("dlgFields"))); $("entryDlg").close(); toast("נשמר"); }
-  catch (err) { toast("השמירה נכשלה: " + err.message); }
-};
+
+// "שמירה" keeps whatever is still wrong marked for review; "שמירה ואישור" says the person checked it.
+async function saveEntry(approve) {
+  const rec = readFields($("dlgFields"));
+  const why = approve ? [] : reviewReasons(rec, { exceptId: editing });
+  rec.status = why.length ? "review" : "ok";
+  rec.reviewWhy = why.join(" · ");
+  try {
+    await store.update(editing, rec);
+    $("entryDlg").close();
+    toast(why.length ? "נשמר. המסמך עדיין מסומן לבדיקה" : "נשמר ואושר");
+  } catch (err) { toast("השמירה נכשלה: " + err.message); }
+}
+$("entryForm").onsubmit = (e) => { e.preventDefault(); saveEntry(false); };
+$("approveBtn").onclick = () => saveEntry(true);
 $("cancelBtn").onclick = () => $("entryDlg").close();
 $("delBtn").onclick = async () => {
   if (!confirm("למחוק את המסמך?")) return;
@@ -801,14 +792,16 @@ $("exportBtn").onclick = () => {
   const rows = filtered().map((r) => ({
     "תאריך": showDate(r.date), "לקוח": r.client, "ספק": r.supplier, "ח.פ / ע.מ": r.supplierId, "סוג שירות": r.category,
     "סוג מסמך": r.docType, "מספר מסמך": r.docNo, "פירוט": r.details,
-    "לפני מע״מ": net(r), "מע״מ": r.vat || 0, "סכום כולל": r.amount || 0, "קובץ": r.fileName,
+    "לפני מע״מ": net(r), "מע״מ": r.vat || 0, "סכום כולל": r.amount || 0,
+    "מצב": needsReview(r) ? "לבדיקה" : "תקין", "הערות": r.reviewWhy || "", "קובץ": r.fileName,
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
-  ws["!cols"] = [10, 16, 26, 12, 16, 16, 12, 30, 12, 10, 12, 24].map((wch) => ({ wch }));
+  ws["!cols"] = [10, 16, 26, 12, 16, 16, 12, 30, 12, 10, 12, 8, 40, 24].map((wch) => ({ wch }));
   const wb = XLSX.utils.book_new();
   wb.Workbook = { Views: [{ RTL: true }] };
   XLSX.utils.book_append_sheet(wb, ws, "מסמכים");
-  XLSX.writeFile(wb, `Fairy מסמכים ${new Date().toISOString().slice(0, 10)}.xlsx`);
+  const who = client && client !== ALL ? `${client} ` : "";
+  XLSX.writeFile(wb, `מסמכים ${who}${new Date().toISOString().slice(0, 10)}.xlsx`);
 };
 
 // ---------- summary ----------
@@ -824,8 +817,8 @@ function bars(title, map, limit = 12) {
 }
 
 function renderSummary() {
-  const year = $("sumYear").value, client = $("sumClient").value;
-  const rows = records.filter((r) => inScope(r) && (r.date || "").startsWith(year) && (!client || r.client === client));
+  const year = $("sumYear").value, who = $("sumClient").value;
+  const rows = records.filter((r) => inScope(r) && (r.date || "").startsWith(year) && (!who || r.client === who));
   const add = (m, k, v) => m.set(k, round2((m.get(k) || 0) + v));
   const byCat = new Map(), bySup = new Map();
   const months = Array.from({ length: 12 }, () => ({ amount: 0, vat: 0, n: 0 }));
