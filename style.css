@@ -62,6 +62,21 @@ button.link:hover { background: rgba(255, 255, 255, 0.12); }
 .bar { flex: 1; height: 6px; border-radius: 99px; background: rgba(255, 255, 255, .15); overflow: hidden; }
 .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
 
+/* the whole upload's progress, kept in view while scrolling through the files */
+.progress { position: sticky; top: 8px; z-index: 3; margin-top: 16px; padding: 12px 16px; border-radius: 12px;
+  background: rgba(30, 60, 114, .94); border: 1px solid var(--accent); box-shadow: 0 6px 20px rgba(0, 0, 0, .3); backdrop-filter: blur(6px); }
+.progress.finished { border-color: var(--pos); }
+.progress.warn { border-color: var(--neg); }
+.prog-skip { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+.progress.finished .bar i { background: var(--pos); }
+.prog-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin-bottom: 8px; }
+.prog-head span { color: var(--muted); font-size: 14px; }
+.prog-head .pct { font-size: 1.2rem; direction: ltr; }
+.progress .bar { height: 10px; }
+.prog-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.prog-chips:empty { display: none; }
+.chip { font-size: 13px; padding: 2px 10px; border-radius: 999px; background: rgba(255, 255, 255, .12); border: 1px solid var(--line); }
+
 .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px 14px; }
 .fields label { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); }
 .fields label.wide { grid-column: 1 / -1; }

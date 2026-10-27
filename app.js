@@ -223,14 +223,15 @@ function dupReason(a, b) {
 }
 const describe = (x) => [x.supplier, showDate(x.date), x.amount ? fmt(x.amount) : "", x.fileName].filter(Boolean).join(" · ");
 
-// A saved record, or a file still waiting in this upload, that looks like the same document.
+// A saved record, or a file that came earlier in this upload, that looks like the same document
+// (only earlier ones, so of two copies just the second is flagged).
 function findDuplicate(r, { exceptId, exceptItem } = {}) {
   for (const x of records) {
     const why = x.id !== exceptId && dupReason(r, x);
     if (why) return { why, what: `כבר נקלט: ${describe(x)}` };
   }
   for (const it of pending) {
-    if (it === exceptItem || !it.rec) continue;
+    if (it === exceptItem || !it.rec || (exceptItem && it.seq > exceptItem.seq)) continue;
     const x = it.rec();
     const why = dupReason(r, x);
     if (why) return { why, what: `מופיע גם בהעלאה הזו: ${describe(x)}` };
@@ -332,16 +333,95 @@ const pending = new Set();
 function syncSaveAll() { $("saveAllBtn").hidden = [...pending].filter((it) => it.ready).length < 2; }
 $("saveAllBtn").onclick = async () => { for (const it of [...pending]) if (it.ready) await it.save(); };
 
+// "heic (200), docx (3)" for the files that were left out.
+function kinds(paths) {
+  const count = {};
+  for (const p of paths) { const ext = (p.match(/\.([^./]+)$/)?.[1] || "ללא סיומת").toLowerCase(); count[ext] = (count[ext] || 0) + 1; }
+  return Object.entries(count).sort((a, b) => b[1] - a[1]).map(([e, n]) => `${e} (${n})`).join(", ");
+}
+// A message in the progress panel that stays until the next upload.
+function progNote(html, warn = false) {
+  const box = $("progress");
+  box.className = "progress" + (warn ? " warn" : "");
+  box.innerHTML = html;
+  box.hidden = false;
+  document.title = TITLE;
+}
+
 async function addFiles(list) {
+  if (!list.length) return;
+  showView("upload");
+  if (prog.done >= prog.total) progNote(`<div class="prog-head"><b>⏳ מכין ${list.length > 1 ? `${list.length} קבצים` : "את הקובץ"} לקריאה…</b></div>`);
   const out = [], skipped = [];
-  for (const x of list) await collect(x instanceof File ? { file: x } : x, out, skipped);
+  try {
+    for (const x of list) await collect(x instanceof File ? { file: x } : x, out, skipped);
+  } catch (e) {
+    progNote(`<b>❌ לא הצלחתי לפתוח את הקבצים:</b> ${esc(e.message)}`, true);
+    return;
+  }
+  const skippedNote = skipped.length
+    ? `<p class="prog-skip">דולגו ${skipped.length} קבצים שאינם PDF או תמונה: ${esc(kinds(skipped))}.${/heic|heif/i.test(kinds(skipped)) ? " קובצי HEIC (תמונות מאייפון) צריך לשמור קודם כ-JPG." : ""}</p>` : "";
+  if (!out.length) {
+    if (prog.done >= prog.total) progNote(`<b>⚠️ לא נמצאו מסמכים לקריאה.</b>${skippedNote}`, true);
+    else toast(`לא נמצאו מסמכים לקריאה (${kinds(skipped)})`);
+    return;
+  }
   if (out.length >= MAX_FILES) toast(`נקלטים ${MAX_FILES} המסמכים הראשונים. את השאר מעלים בפעם הבאה.`);
-  else if (out.length > 1 || skipped.length) toast(`נמצאו ${out.length} מסמכים${skipped.length ? `, ${skipped.length} קבצים אחרים דולגו (רק PDF ותמונות)` : ""}`);
+  prog.skippedNote = skippedNote;
+  progStart(out.length);
   // One block per upload, newest on top, its files in their own order.
   const batch = document.createElement("div");
   $("queue").prepend(batch);
   for (const { file, path } of out) processFile(file, path, batch);
 }
+
+// ---------- progress of the whole upload ----------
+// One panel for everything being read: how many are done, roughly how long is left,
+// and how the finished ones came out. A single file needs only its own bar.
+
+const TITLE = document.title;
+const prog = { total: 0, done: 0 };
+function progStart(n) {
+  if (prog.done >= prog.total) Object.assign(prog, { total: 0, done: 0, ready: 0, check: 0, dup: 0, failed: 0, saved: 0, started: Date.now(), ended: 0, share: new Map(), skippedNote: prog.skippedNote });
+  prog.total += n;
+  renderProgress();
+}
+function progStep(item, p) { prog.share.set(item, p); renderProgress(); }
+function progDone(item, kind) {
+  if (item.counted) return;
+  item.counted = true;
+  prog.share.delete(item);
+  prog.done++;
+  prog[kind]++;
+  if (prog.done >= prog.total) prog.ended = Date.now();
+  renderProgress();
+}
+
+const minutes = (ms) => { const m = Math.round(ms / 60000); return m < 1 ? "פחות מדקה" : m === 1 ? "דקה" : `${m} דקות`; };
+const chip = (icon, n, label) => (n ? `<span class="chip">${icon} ${n} ${label}</span>` : "");
+function renderProgress() {
+  if (renderProgress.raf) return;
+  renderProgress.raf = requestAnimationFrame(() => {
+    renderProgress.raf = 0;
+    const box = $("progress");
+    if (prog.total < 2 && !prog.skippedNote) { box.hidden = true; document.title = TITLE; return; }
+    const part = [...prog.share.values()].reduce((s, p) => s + p, 0);
+    const frac = Math.min(1, (prog.done + part) / prog.total), pct = Math.floor(frac * 100);
+    const finished = prog.done >= prog.total;
+    const elapsed = (finished ? prog.ended : Date.now()) - prog.started;
+    const left = finished ? "" : frac > 0.03 ? ((rest) => (rest < 60000 ? "נשארה פחות מדקה" : `נשארו עוד כ-${minutes(rest)}`))((elapsed / frac) * (1 - frac)) : "מחשב כמה זמן זה ייקח…";
+    box.hidden = false;
+    box.className = "progress" + (finished ? " finished" : "");
+    box.innerHTML = `<div class="prog-head">
+        <b>${finished ? `✨ הקריאה הסתיימה: ${prog.total} מסמכים תוך ${minutes(elapsed)}` : `קורא מסמכים: ${prog.done} מתוך ${prog.total}`}</b>
+        <span class="grow">${left}</span><b class="pct">${pct}%</b></div>
+      <div class="bar"><i style="width:${frac * 100}%"></i></div>
+      <div class="prog-chips">${chip("✅", prog.ready, "מוכנים לשמירה")}${chip("✏️", prog.check, "חסרים פרטים")}${chip("⚠️", prog.dup, "כפולים")}${chip("❌", prog.failed, "לא נקראו")}${chip("💾", prog.saved, "נשמרו")}</div>${prog.skippedNote || ""}`;
+    document.title = finished ? TITLE : `(${pct}%) ${TITLE}`;
+  });
+}
+// While files are being read the time left keeps counting down even between steps.
+setInterval(() => { if (prog.done < prog.total) renderProgress(); }, 5000);
 
 // At most two files are read at a time, so a big folder doesn't choke the browser.
 let reading = 0;
@@ -353,6 +433,7 @@ async function oneAtATime(fn) {
   finally { reading--; waitingToRead.shift()?.(); }
 }
 
+let itemSeq = 0;
 async function processFile(file, path, batch) {
   const el = document.createElement("div");
   el.className = "item";
@@ -362,9 +443,11 @@ async function processFile(file, path, batch) {
   const status = (p, label) => {
     el.querySelector(".bar i").style.width = Math.round(p * 100) + "%";
     if (label) el.querySelector(".label").textContent = label;
+    progStep(item, p);
   };
-  const item = { ready: false };
+  const item = { ready: false, seq: ++itemSeq };
   pending.add(item);
+  progStep(item, 0);
   try {
     // The very same file again: say so at once, before spending time on reading it.
     item.hash = await fingerprint(file);
@@ -372,6 +455,7 @@ async function processFile(file, path, batch) {
     item.rec = () => ({ fileHash: item.hash, fileName: path });
     if (same) {
       toast(`⚠️ כפילות: ${path}`);
+      progDone(item, "dup");
       el.classList.add("dup");
       el.querySelector(".body").innerHTML = `<p class="dup-warn">⚠️ <b>הקובץ הזה כבר הועלה</b> (${same.why}).<br>${esc(same.what)}</p>
         <div class="item-actions"><button class="primary drop-it">הסרה</button><button class="ghost go-on">לקלוט בכל זאת</button></div>`;
@@ -380,6 +464,8 @@ async function processFile(file, path, batch) {
         el.querySelector(".go-on").onclick = () => ok(true);
       });
       if (!goOn) { pending.delete(item); el.remove(); syncSaveAll(); return; }
+      prog.total++;
+      item.counted = false;
       el.querySelector(".body").innerHTML = '<div class="status"><span class="label">ממתין…</span><div class="bar"><i></i></div></div>';
     }
     const { text, preview, ocr } = await oneAtATime(() => readFile(file, status));
@@ -410,7 +496,9 @@ async function processFile(file, path, batch) {
       return dup;
     };
     box.addEventListener("input", checkDup);
-    if (checkDup()) toast(`⚠️ ייתכן שזו כפילות: ${path}`);
+    const dupNow = checkDup();
+    if (dupNow) toast(`⚠️ ייתכן שזו כפילות: ${path}`);
+    progDone(item, dupNow ? "dup" : missing || !text.trim() ? "check" : "ready");
     item.ready = true;
     item.save = async () => {
       const rec = item.rec();
@@ -426,6 +514,8 @@ async function processFile(file, path, batch) {
         pending.delete(item);
         item.ready = false;
         el.classList.add("saved");
+        prog.saved++;
+        renderProgress();
         box.querySelectorAll("input,select").forEach((i) => (i.disabled = true));
         el.querySelector(".item-actions").innerHTML = '<span class="saved-note">✓ נשמר</span><button class="ghost drop-it">הסתרה</button>';
         el.querySelector(".drop-it").onclick = () => el.remove();
@@ -439,6 +529,7 @@ async function processFile(file, path, batch) {
     el.querySelector(".drop-it").onclick = () => { pending.delete(item); el.remove(); syncSaveAll(); };
   } catch (e) {
     pending.delete(item);
+    progDone(item, "failed");
     el.querySelector(".body").innerHTML = `<p class="err">לא הצלחתי לקרוא את ${esc(path)}: ${esc(e.message)}</p><button class="ghost drop-it">הסרה</button>`;
     el.querySelector(".drop-it").onclick = () => el.remove();
   }
