@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 
@@ -60,6 +60,7 @@
     <div class="side-nav-foot">
       <span class="email" id="userEmail"></span>
       <span class="mode" id="modeNote" hidden>מצב מקומי: הנתונים נשמרים רק בדפדפן הזה</span>
+      <button class="link" id="allDocsBtn">📚 כל המסמכים</button>
       <button class="link" id="addClientBtn">➕ לקוח חדש</button>
       <button class="link" id="shareBtn" hidden>👥 שיתוף</button>
       <button class="link" id="logoutBtn">↩️ יציאה</button>
@@ -112,21 +113,47 @@
       <select id="catFilter"><option value="">כל סוגי השירות</option></select>
       <input type="month" id="monthFilter" title="חודש">
     </div>
-    <div class="tablewrap">
-      <table>
-        <thead><tr>
-          <th class="sort" data-sort="date">תאריך <span id="sortArrow">▼</span></th>
-          <th>לקוח</th>
-          <th>ספק</th>
-          <th>סוג שירות</th>
-          <th>מסמך</th>
-          <th class="num">מע״מ</th>
-          <th class="num">סכום</th>
-        </tr></thead>
-        <tbody id="rows"></tbody>
-        <tfoot><tr><td colspan="5">סה״כ מוצג</td><td class="num" id="shownVat"></td><td class="num" id="shownSum"></td></tr></tfoot>
-      </table>
-      <p class="empty" id="emptyMsg" hidden>עוד לא נקלטו מסמכים. מעלים אותם ב"קליטת מסמכים".</p>
+    <div class="bulk-bar" id="bulkBar" hidden>
+      <b id="selCount"></b>
+      <button type="button" class="danger" id="bulkDelete">🗑️ מחיקת המסומנים</button>
+      <button type="button" class="ghost" id="bulkClear">ביטול הסימון</button>
+    </div>
+    <div class="docs-split">
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th class="sel"><input type="checkbox" id="selAll" title="סימון כל המוצגים" aria-label="סימון כל המוצגים"></th>
+            <th class="sort" data-sort="date">תאריך <span id="sortArrow">▼</span></th>
+            <th>לקוח</th>
+            <th>ספק</th>
+            <th>סוג שירות</th>
+            <th>מסמך</th>
+            <th class="num">מע״מ</th>
+            <th class="num">סכום</th>
+            <th></th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+          <tfoot><tr><td></td><td colspan="5">סה״כ מוצג</td><td class="num" id="shownVat"></td><td class="num" id="shownSum"></td><td></td></tr></tfoot>
+        </table>
+        <p class="empty" id="emptyMsg" hidden>עוד לא נקלטו מסמכים. מעלים אותם ב"קליטת מסמכים".</p>
+      </div>
+      <!-- The picked document beside the list, to check the details against the document itself. -->
+      <aside class="doc-side" id="docSide">
+        <p class="soon side-empty" id="sideEmpty">לחצו על מסמך ברשימה כדי לראות אותו כאן.<br><small>החצים ↑ ↓ במקלדת עוברים בין המסמכים.</small></p>
+        <div id="sideDoc" hidden>
+          <div class="side-nav-btns">
+            <button type="button" class="ghost" id="sidePrev" title="המסמך הקודם (↑)">▲ הקודם</button>
+            <span class="soon" id="sidePos"></span>
+            <button type="button" class="ghost" id="sideNext" title="המסמך הבא (↓)">הבא ▼</button>
+          </div>
+          <div class="side-img" id="sideImg"></div>
+          <div class="side-info" id="sideInfo"></div>
+          <div class="side-actions">
+            <button type="button" class="primary" id="sideEdit">✏️ בדיקה ועריכה</button>
+            <button type="button" class="danger" id="sideDelete">🗑️ מחיקה</button>
+          </div>
+        </div>
+      </aside>
     </div>
   </main>
 
@@ -183,6 +210,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=13"></script>
+<script type="module" src="app.js?v=14"></script>
 </body>
 </html>

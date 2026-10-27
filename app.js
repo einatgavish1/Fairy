@@ -215,6 +215,14 @@ $("newClientForm").onsubmit = async (e) => {
   $("newClientName").value = "";
   chooseClient(name);
 };
+// Every document of every client, in the list.
+$("allDocsBtn").onclick = () => {
+  if (client !== ALL) chooseClient(ALL);
+  $("reviewOnly").checked = false;
+  $("search").value = "";
+  renderTable();
+  showView("docs");
+};
 $("addClientBtn").onclick = async () => {
   const name = await addClient(prompt("שם הלקוח החדש:") || "");
   if (name) chooseClient(name);
@@ -806,18 +814,27 @@ function statusTag(r) {
   return "";
 }
 
+// Documents ticked in the list, for deleting several at once.
+const selected = new Set();
+let shownIds = [];
+
 function renderTable() {
   const rows = filtered();
+  shownIds = rows.map((r) => r.id);
+  for (const id of [...selected]) if (!records.some((r) => r.id === id)) selected.delete(id);
   $("sortArrow").textContent = sortDir < 0 ? "▼" : "▲";
-  $("rows").innerHTML = rows.map((r) => `<tr data-id="${r.id}"${needsReview(r) ? ' class="dup"' : ""}>
+  $("rows").innerHTML = rows.map((r) => `<tr data-id="${r.id}" class="${needsReview(r) ? "dup" : ""}${selected.has(r.id) ? " picked" : ""}">
+    <td class="sel"><input type="checkbox" data-sel="${r.id}"${selected.has(r.id) ? " checked" : ""} aria-label="בחירה"></td>
     <td class="num">${showDate(r.date)}</td>
     <td>${esc(r.client) || '<span class="soon">ללא</span>'}</td>
     <td>${statusTag(r)}${esc(r.supplier) || `<span class="soon">${esc(r.fileName)}</span>`}${r.details ? `<small>${esc(r.details)}</small>` : ""}</td>
     <td>${r.category ? `<span class="tag">${esc(r.category)}</span>` : ""}</td>
     <td>${esc(r.docType)}${r.docNo ? `<small>מס׳ ${esc(r.docNo)}</small>` : ""}</td>
     <td class="num">${r.vat ? fmt(r.vat) : ""}</td>
-    <td class="num">${r.amount ? fmt(r.amount) : ""}</td></tr>`).join("");
-  $("rows").querySelectorAll("tr").forEach((tr) => (tr.onclick = () => openEntry(tr.dataset.id)));
+    <td class="num">${r.amount ? fmt(r.amount) : ""}</td>
+    <td class="row-del"><button type="button" class="icon-del" data-del="${r.id}" title="מחיקת המסמך" aria-label="מחיקת המסמך">🗑️</button></td></tr>`).join("");
+  syncSelection();
+  showSide(shownIds.includes(current) ? current : null);
   const sum = (k) => round2(rows.reduce((s, r) => s + (r[k] || 0), 0));
   $("shownSum").textContent = fmt(sum("amount"));
   $("shownVat").textContent = fmt(sum("vat"));
@@ -827,6 +844,122 @@ function renderTable() {
   $("sumNet").textContent = fmt(round2(sum("amount") - sum("vat")));
   $("emptyMsg").hidden = records.some(inScope);
 }
+
+// One click handler for the whole list: the tick box marks, the bin deletes, anywhere else shows the
+// document in the side panel (on a phone, where there is no room beside the list, it opens it).
+const wide = () => matchMedia("(min-width: 1100px)").matches;
+$("rows").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr");
+  if (!tr) return;
+  const del = e.target.closest("[data-del]");
+  if (del) { deleteDocs([del.dataset.del]); return; }
+  if (e.target.closest("td.sel")) {
+    const box = tr.querySelector("[data-sel]");
+    if (e.target !== box) box.checked = !box.checked;
+    box.checked ? selected.add(tr.dataset.id) : selected.delete(tr.dataset.id);
+    tr.classList.toggle("picked", box.checked);
+    syncSelection();
+    return;
+  }
+  if (wide()) showSide(tr.dataset.id);
+  else openEntry(tr.dataset.id);
+});
+$("rows").addEventListener("dblclick", (e) => {
+  const tr = e.target.closest("tr");
+  if (tr && !e.target.closest("td.sel, [data-del]")) openEntry(tr.dataset.id);
+});
+$("selAll").onchange = () => {
+  for (const id of shownIds) $("selAll").checked ? selected.add(id) : selected.delete(id);
+  renderTable();
+};
+$("bulkDelete").onclick = () => deleteDocs([...selected]);
+$("bulkClear").onclick = () => { selected.clear(); renderTable(); };
+
+function syncSelection() {
+  const n = selected.size;
+  $("bulkBar").hidden = !n;
+  $("selCount").textContent = n === 1 ? "סומן מסמך אחד" : `סומנו ${n} מסמכים`;
+  $("selAll").checked = shownIds.length > 0 && shownIds.every((id) => selected.has(id));
+  $("selAll").indeterminate = !$("selAll").checked && shownIds.some((id) => selected.has(id));
+}
+
+// Deleting removes the record and its picture for good, so it always asks first.
+async function deleteDocs(ids) {
+  if (!ids.length) return false;
+  const one = ids.length === 1 && records.find((r) => r.id === ids[0]);
+  const what = one ? `את המסמך "${[one.supplier || one.fileName, showDate(one.date), one.amount ? fmt(one.amount) : ""].filter(Boolean).join(" · ")}"` : `${ids.length} מסמכים`;
+  if (!confirm(`למחוק ${what}?\nאי אפשר לשחזר אחרי המחיקה.`)) return false;
+  // After deleting the one on show, the panel moves on to the next document in the list.
+  const next = ids.includes(current) ? shownIds.find((id, i) => i > shownIds.indexOf(current) && !ids.includes(id)) : current;
+  let done = 0, failed = 0;
+  for (const id of ids) {
+    try { await store.remove(id); selected.delete(id); previewCache.delete(id); done++; }
+    catch { failed++; }
+    if (ids.length > 5) toast(`מוחק… ${done + failed} מתוך ${ids.length}`);
+  }
+  current = next ?? null;
+  renderTable();
+  toast(failed ? `נמחקו ${done}. ${failed} לא נמחקו` : done === 1 ? "המסמך נמחק" : `נמחקו ${done} מסמכים`);
+  return !failed;
+}
+
+// ---------- the document beside the list ----------
+
+let current = null;
+const previewCache = new Map();
+async function previewOf(id) {
+  if (!previewCache.has(id)) previewCache.set(id, store.preview(id).catch(() => ""));
+  return previewCache.get(id);
+}
+
+async function showSide(id) {
+  current = id;
+  document.querySelectorAll("#rows tr.current").forEach((tr) => tr.classList.remove("current"));
+  const r = id && records.find((x) => x.id === id);
+  $("sideEmpty").hidden = !!r;
+  $("sideDoc").hidden = !r;
+  if (!r) return;
+  const tr = document.querySelector(`#rows tr[data-id="${id}"]`);
+  tr?.classList.add("current");
+  tr?.scrollIntoView({ block: "nearest" });
+  const i = shownIds.indexOf(id);
+  $("sidePos").textContent = `${i + 1} מתוך ${shownIds.length}`;
+  $("sidePrev").disabled = i <= 0;
+  $("sideNext").disabled = i >= shownIds.length - 1;
+  const why = [r.reviewWhy, dupOf.get(id) && `ייתכן כפילות: ${dupOf.get(id)}`].filter(Boolean).join(" · ");
+  const line = (label, value) => (value ? `<div><small>${label}</small><b>${value}</b></div>` : "");
+  $("sideInfo").innerHTML = `${why ? `<p class="dup-warn">⚠️ ${esc(why)}</p>` : '<p class="side-ok">✅ תקין</p>'}
+    <div class="side-grid">
+      ${line("לקוח", esc(r.client))}${line("ספק", esc(r.supplier))}${line("תאריך", showDate(r.date))}
+      ${line("סכום", r.amount ? fmt(r.amount) : "")}${line("מע״מ", r.vat ? fmt(r.vat) : "")}${line("סוג שירות", esc(r.category))}
+      ${line("מסמך", esc([r.docType, r.docNo && `מס׳ ${r.docNo}`].filter(Boolean).join(" ")))}${line("שם במסמך", esc(r.customer))}
+    </div>
+    <p class="side-file ltr-path">${esc(r.fileName)}</p>`;
+  $("sideImg").innerHTML = '<p class="soon">טוען את המסמך…</p>';
+  const src = await previewOf(id);
+  if (current !== id) return;
+  $("sideImg").innerHTML = src
+    ? `<img src="${src}" alt="המסמך" title="לחיצה מגדילה">`
+    : `<p class="soon">אין תמונה של המסמך${/›/.test(r.fileName) ? " (שורה מקובץ אקסל)" : ""}.</p>`;
+  const img = $("sideImg").querySelector("img");
+  if (img) img.onclick = () => zoom(src);
+  // The next one is likely to be looked at next: fetch it ahead.
+  if (shownIds[i + 1]) previewOf(shownIds[i + 1]);
+}
+const step = (d) => { const i = shownIds.indexOf(current) + d; if (shownIds[i]) showSide(shownIds[i]); };
+$("sidePrev").onclick = () => step(-1);
+$("sideNext").onclick = () => step(1);
+$("sideEdit").onclick = () => current && openEntry(current);
+$("sideDelete").onclick = () => current && deleteDocs([current]);
+// ↑ ↓ move through the list, Enter opens the document for editing.
+document.addEventListener("keydown", (e) => {
+  if (!document.querySelector('.view-panel[data-view="docs"]').classList.contains("view-active")) return;
+  if (document.querySelector("dialog[open]") || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName)) return;
+  if (e.key === "ArrowDown") { e.preventDefault(); current ? step(1) : shownIds[0] && showSide(shownIds[0]); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); step(-1); }
+  else if (e.key === "Enter" && current) { e.preventDefault(); openEntry(current); }
+  else if (e.key === "Delete" && current) { e.preventDefault(); deleteDocs([current]); }
+});
 
 // ---------- one document: see it, fix it, approve it ----------
 
@@ -872,11 +1005,7 @@ async function saveEntry(approve) {
 $("entryForm").onsubmit = (e) => { e.preventDefault(); saveEntry(false); };
 $("approveBtn").onclick = () => saveEntry(true);
 $("cancelBtn").onclick = () => $("entryDlg").close();
-$("delBtn").onclick = async () => {
-  if (!confirm("למחוק את המסמך?")) return;
-  try { await store.remove(editing); $("entryDlg").close(); toast("נמחק"); }
-  catch (err) { toast("המחיקה נכשלה: " + err.message); }
-};
+$("delBtn").onclick = async () => { if (await deleteDocs([editing])) $("entryDlg").close(); };
 
 $("exportBtn").onclick = () => {
   const rows = filtered().map((r) => ({
