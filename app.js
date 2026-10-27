@@ -1,5 +1,6 @@
 import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=7";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=8";
+import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => (n < 0 ? "-" : "") + "₪" + Math.abs(n || 0).toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -416,7 +417,6 @@ const extOf = (name) => (name.match(/\.([^./]+)$/)?.[1] || "").toLowerCase();
 // Why a file can't be taken in, in words the person can act on.
 const NOT_READABLE = {
   doc: "קובץ Word ישן (.doc). שמרו אותו כ-docx או PDF",
-  xls: "גיליון אקסל. ייצאו את המסמך ל-PDF", xlsx: "גיליון אקסל. ייצאו את המסמך ל-PDF", csv: "קובץ נתונים (CSV), לא מסמך",
   msg: "הודעת מייל. שמרו את הקבצים המצורפים", eml: "הודעת מייל. שמרו את הקבצים המצורפים",
   rar: "קובץ דחוס שאינו ZIP. פרסו אותו או דחסו מחדש כ-ZIP", "7z": "קובץ דחוס שאינו ZIP. פרסו אותו או דחסו מחדש כ-ZIP",
   txt: "קובץ טקסט, לא מסמך", lnk: "קיצור דרך, לא הקובץ עצמו", ini: "קובץ מערכת",
@@ -485,7 +485,7 @@ async function addFiles(list) {
   // One block per upload, newest on top, its files in their own order.
   const batch = document.createElement("div");
   $("queue").prepend(batch);
-  for (const { file, path } of out) processFile(file, path, batch);
+  for (const { file, path } of out) (SHEET_EXT.test(file.name) ? processSheet : processFile)(file, path, batch);
 }
 
 // ---------- progress of the whole upload ----------
@@ -508,7 +508,7 @@ function progDone(item, kind) {
   item.counted = true;
   prog.share.delete(item);
   prog.done++;
-  prog[kind]++;
+  if (kind) prog[kind]++;
   if (prog.done >= prog.total) prog.ended = Date.now();
   renderProgress();
 }
@@ -523,9 +523,11 @@ function progNote(text, warn = false) {
 const minutes = (ms) => { const m = Math.round(ms / 60000); return m < 1 ? "פחות מדקה" : m === 1 ? "דקה" : `${m} דקות`; };
 const chip = (icon, n, label) => (n ? `<span class="chip">${icon} ${n} ${label}</span>` : "");
 function renderProgress() {
-  if (renderProgress.raf) return;
-  renderProgress.raf = requestAnimationFrame(() => {
-    renderProgress.raf = 0;
+  // A timer rather than requestAnimationFrame, which stops in a background tab: the percentage in
+  // the tab's title keeps moving while the person works in another tab.
+  if (renderProgress.timer) return;
+  renderProgress.timer = setTimeout(() => {
+    renderProgress.timer = 0;
     const box = $("progress");
     if (prog.total < 2) {
       if (!prog.missed.length) box.hidden = true;
@@ -547,7 +549,7 @@ function renderProgress() {
       <div class="prog-chips">${chip("✅", prog.ok, "נשמרו")}${chip("⚠️", prog.review, "נשמרו לבדיקה")}${chip("⏭️", prog.skipped, "דולגו (כבר קיימים)")}${chip("❌", prog.failed, "לא נשמרו")}</div>
       ${finished && prog.review ? '<button type="button" class="primary to-review">⚠️ למסמכים שמחכים לבדיקה</button>' : ""}`;
     document.title = finished ? TITLE : `(${pct}%) ${TITLE}`;
-  });
+  }, 120);
 }
 // While files are being read the time left keeps counting down even between steps.
 setInterval(() => { if (prog.done < prog.total) renderProgress(); }, 5000);
@@ -674,6 +676,64 @@ async function processFile(file, path, batch) {
     progDone(item, "failed");
     show("failed", `❌ <b>השמירה נכשלה</b> · ${esc(e.message)}`);
   }
+}
+
+// An Excel or CSV file. A table of expenses becomes one document per row, each checked like any
+// other document; a row already in the system (same file, same row) is skipped. A sheet that is not
+// such a table is read as one document instead.
+async function processSheet(file, path, batch) {
+  let rows = null;
+  try { rows = tableRows(await readWorkbook(file)); } catch { /* not a workbook this reader knows: try it as a document */ }
+  if (!rows) return processFile(file, path, batch);
+
+  const el = document.createElement("div");
+  el.className = "item";
+  el.innerHTML = `<div class="thumb"><span class="soon">📊</span></div>
+    <div class="body"><span class="fname">${esc(path)}</span><div class="status"><span class="label">קולט שורות…</span><div class="bar"><i></i></div></div></div>`;
+  batch.append(el);
+  const item = {};
+  progStep(item, 0);
+  let hash = "";
+  try { hash = await fingerprint(file); } catch {}
+  const n = { ok: 0, review: 0, skipped: 0, failed: 0 };
+  for (const [i, row] of rows.entries()) {
+    const rowHash = hash && `${hash}#${row.ref}`;
+    if (rowHash && findDuplicate({ fileHash: rowHash })) { n.skipped++; continue; }
+    const rec = {
+      client: clientFor(row.customer), customer: row.customer, date: row.date, supplier: row.supplier, supplierId: row.supplierId,
+      category: row.category, docType: row.docType, docNo: row.docNo, amount: row.amount, vat: row.vat, details: row.details,
+      fileName: `${path} › ${row.ref}`, fileHash: rowHash,
+    };
+    if (!rec.category) rec.category = learnedCategory(rec);
+    const why = reviewReasons(rec);
+    rec.status = why.length ? "review" : "ok";
+    rec.reviewWhy = why.join(" · ");
+    try {
+      const id = await store.add(rec, "");
+      savedNow.push({ ...rec, id });
+      n[rec.status]++;
+    } catch { n.failed++; }
+    const p = (i + 1) / rows.length;
+    el.querySelector(".bar i").style.width = Math.round(p * 100) + "%";
+    el.querySelector(".label").textContent = `קולט שורה ${i + 1} מתוך ${rows.length}…`;
+    progStep(item, p);
+  }
+  prog.ok += n.ok;
+  prog.review += n.review;
+  prog.skipped += n.skipped;
+  prog.failed += n.failed;
+  progDone(item, null);
+  el.className = `item ${n.review || n.failed ? "review" : "saved"}`;
+  el.querySelector(".body").innerHTML = `<span class="fname">${esc(path)}</span>
+    <div class="result">📊 <b>${rows.length ? `נקלטו ${rows.length - n.skipped - n.failed} שורות מתוך ${rows.length}` : "לא נמצאו שורות בטבלה"}</b><br>
+      <small>${[n.ok && `✅ ${n.ok} תקינות`, n.review && `⚠️ ${n.review} לבדיקה`, n.skipped && `⏭️ ${n.skipped} כבר היו במערכת`, n.failed && `❌ ${n.failed} לא נשמרו`].filter(Boolean).join(" · ")}</small></div>
+    <div class="item-actions"><button class="ghost show-rows">הצגה ברשימה</button></div>`;
+  el.querySelector(".show-rows").onclick = () => {
+    $("search").value = path;
+    $("reviewOnly").checked = false;
+    renderTable();
+    showView("docs");
+  };
 }
 
 function zoom(src) {

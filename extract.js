@@ -2,6 +2,8 @@
 // Everything runs in the browser: pdf.js for PDFs that carry text, Tesseract (Hebrew + English)
 // for photos and scans (HEIC and TIFF converted first), mammoth for .docx. Nothing is sent to an outside service.
 
+import { SHEET_EXT, readWorkbook, workbookText } from "./sheets.js?v=1";
+
 const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
 const TESSERACT = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
 
@@ -48,11 +50,13 @@ function ocr(canvas, onProgress) {
 // ---------- reading files ----------
 
 // What can be read, by extension (the upload filter in app.js uses these too).
-export const READABLE = /\.(pdf|jpe?g|jfif|pjpeg|png|webp|gif|bmp|avif|heic|heif|tiff?|docx)$/i;
+export const READABLE = /\.(pdf|jpe?g|jfif|pjpeg|png|webp|gif|bmp|avif|heic|heif|tiff?|docx|xlsx|xlsm|xls|csv|ods)$/i;
 export const MIME = {
   pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", jfif: "image/jpeg", pjpeg: "image/jpeg", png: "image/png",
   webp: "image/webp", gif: "image/gif", bmp: "image/bmp", avif: "image/avif", heic: "image/heic", heif: "image/heif",
   tif: "image/tiff", tiff: "image/tiff", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xlsm: "application/vnd.ms-excel.sheet.macroEnabled.12",
+  xls: "application/vnd.ms-excel", csv: "text/csv", ods: "application/vnd.oasis.opendocument.spreadsheet",
 };
 const HEIC2ANY = "https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js";
 const PAKO = "https://cdn.jsdelivr.net/npm/pako@1.0.11/dist/pako.min.js";
@@ -67,6 +71,7 @@ function kindOf(file) {
   if (/^hei[cf]$/.test(ext) || /hei[cf]/.test(file.type)) return "heic";
   if (/^tiff?$/.test(ext) || /tiff/.test(file.type)) return "tiff";
   if (ext === "docx" || /wordprocessingml/.test(file.type)) return "docx";
+  if (SHEET_EXT.test(file.name)) return "sheet";
   return "image";
 }
 
@@ -77,6 +82,7 @@ export async function readFile(file, onProgress = () => {}) {
     case "heic": return readHeic(file, onProgress);
     case "tiff": return readTiff(file, onProgress);
     case "docx": return readDocx(file, onProgress);
+    case "sheet": return readSheet(file, onProgress);
     default: return readImage(file, onProgress);
   }
 }
@@ -122,6 +128,14 @@ async function readDocx(file, onProgress) {
   const { value } = await window.mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
   onProgress(1, "");
   return { text: value, preview: textPreview(value), ocr: false };
+}
+
+// A spreadsheet that is not a table of expenses (an invoice made in Excel, say): its text, as one document.
+async function readSheet(file, onProgress) {
+  onProgress(0.1, "קורא קובץ אקסל…");
+  const text = workbookText(await readWorkbook(file));
+  onProgress(1, "");
+  return { text, preview: textPreview(text), ocr: false };
 }
 
 function textPreview(text) {

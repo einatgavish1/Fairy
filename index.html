@@ -77,11 +77,11 @@
       </div>
     </div>
     <div class="drop" id="drop">
-      <input type="file" id="fileInput" accept="application/pdf,image/*,.heic,.heif,.tif,.tiff,.jfif,.docx,.zip,application/zip" multiple hidden>
+      <input type="file" id="fileInput" accept="application/pdf,image/*,.heic,.heif,.tif,.tiff,.jfif,.docx,.xlsx,.xlsm,.xls,.csv,.ods,.zip,application/zip" multiple hidden>
       <input type="file" id="folderInput" webkitdirectory multiple hidden>
       <span class="drop-icon" aria-hidden="true">📄</span>
       <b>גוררים לכאן חשבוניות וקבלות, תיקייה שלמה או קובץ ZIP</b>
-      <span>PDF, תמונה (גם HEIC מאייפון), סריקת TIFF או Word. קובץ ZIP נפרס אוטומטית.<br>
+      <span>PDF, תמונה (גם HEIC מאייפון), סריקת TIFF, Word או אקסל (כל שורה בטבלת הוצאות נקלטת כמסמך). קובץ ZIP נפרס אוטומטית.<br>
         כל מסמך נשמר מיד אחרי שהוא נקרא. מסמך שחסרים בו פרטים או שיש בו ספק מסומן "לבדיקה".</span>
       <div class="drop-btns">
         <button type="button" class="primary" id="pickFiles">📄 בחירת קבצים / ZIP</button>
@@ -183,6 +183,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=12"></script>
+<script type="module" src="app.js?v=13"></script>
 </body>
 </html>
