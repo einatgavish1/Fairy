@@ -343,7 +343,7 @@
 <!-- After a supplier's name is corrected: the documents with a name like it, to take the corrected one. -->
 <dialog id="supDlg" class="sup-dlg">
   <h2 id="supTitle"></h2>
-  <p class="hint">סמנו את המסמכים של אותו ספק. מסמך שאינו שלו, בטלו את הסימון שלו.</p>
+  <p class="hint" id="supHint"></p>
   <div id="supList"></div>
   <div class="actions"><span class="grow"></span>
     <button type="button" class="ghost" id="supNo">לא, תודה</button>
@@ -387,6 +387,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=45"></script>
+<script type="module" src="app.js?v=46"></script>
 </body>
 </html>

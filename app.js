@@ -1548,7 +1548,8 @@ async function saveEntry(approve) {
     const spread = await spreadCategory(rec, id);
     toast((why.length ? "נשמר. המסמך עדיין מסומן לבדיקה" : "נשמר ואושר")
       + (spread ? `. סוג השירות "${rec.category}" נוסף גם ל-${spread} מסמכים של אותו ספק` : ""));
-    if (before && rec.supplier && rec.supplier !== before.supplier) offerSupplierFix(before.supplier || "", rec, id);
+    if (before && rec.supplier && rec.supplier !== before.supplier) await offerSupplierFix(before.supplier || "", rec, id);
+    if (before) await offerSameSupplier(before, rec, id);
   } catch (err) { toast("השמירה נכשלה: " + err.message); }
 }
 
@@ -1566,21 +1567,16 @@ function nameLikeness(a, b) {
   return (2 * both) / (a.length + b.length - 2);
 }
 
-// After a supplier's name is corrected, the documents whose supplier looks like it (or like the name it
-// had before, or has the same company number) are offered to take the corrected name, ticked in a list.
-async function offerSupplierFix(oldName, rec, id) {
-  const like = records.map((x) => ({ x, score: Math.max(nameLikeness(x.supplier, rec.supplier), nameLikeness(x.supplier, oldName),
-      rec.supplierId && x.supplierId === rec.supplierId ? 1 : 0) }))
-    .filter(({ x, score }) => x.id !== id && x.supplier && x.supplier !== rec.supplier && score >= 0.3)
-    .sort((a, b) => b.score - a.score).slice(0, 40);
-  if (!like.length) return;
-  $("supTitle").textContent = `לעדכן את שם הספק ל"${rec.supplier}" גם במסמכים הדומים?`;
-  // each with its picture, to see whether it is that supplier's; a click on the picture enlarges it
-  $("supList").innerHTML = like.map(({ x }) => `<label class="sup-row"><input type="checkbox" value="${esc(x.id)}" checked>
+// The list of documents to tick, each with its picture (a click on it enlarges it). -> the ticked ids, or
+// [] when the person says no.
+async function pickDocs(title, hint, docs) {
+  $("supTitle").textContent = title;
+  $("supHint").innerHTML = hint;
+  $("supList").innerHTML = docs.map((x) => `<label class="sup-row"><input type="checkbox" value="${esc(x.id)}" checked>
     <span class="sup-thumb" data-pic="${esc(x.id)}"><small class="soon">טוען…</small></span>
-    <span class="sup-text"><b>${esc(x.supplier)}</b><small>${esc([x.client, showDate(x.date), x.amount ? fmt(x.amount) : "", x.docType].filter(Boolean).join(" · "))}</small></span></label>`).join("");
+    <span class="sup-text"><b>${esc(x.supplier)}</b><small>${esc([x.client, showDate(x.date), x.amount ? fmt(x.amount) : "", x.docType, x.category].filter(Boolean).join(" · "))}</small></span></label>`).join("");
   $("supDlg").showModal();
-  for (const { x } of like) {
+  for (const x of docs) {
     previewOf(x.id).then((src) => {
       const box = $("supList").querySelector(`[data-pic="${CSS.escape(x.id)}"]`);
       if (!box) return;
@@ -1596,22 +1592,61 @@ async function offerSupplierFix(oldName, rec, id) {
   });
   const ids = [...$("supList").querySelectorAll("input:checked")].map((i) => i.value);
   $("supDlg").close();
-  if (!ok || !ids.length) return;
+  return ok ? ids : [];
+}
+
+// Saves the same change on each ticked document; one waiting for review is checked again.
+async function applyToDocs(ids, change) {
   let n = 0;
   for (const xid of ids) {
     const x = records.find((r) => r.id === xid);
     if (!x) continue;
-    const upd = { supplier: rec.supplier };
-    if (!x.supplierId && rec.supplierId) upd.supplierId = rec.supplierId;
-    if (!x.category && rec.category) upd.category = rec.category;
-    // a document waiting for review is checked again with the right name (the garbled one was a reason)
+    const upd = change(x);
     if (x.status === "review") {
       const why = reviewReasons({ ...x, ...upd }, { exceptId: x.id, noText: (x.reviewWhy || "").includes("לא נמצא טקסט") });
       Object.assign(upd, { status: why.length ? "review" : "ok", reviewWhy: why.join(" · ") });
     }
     try { await store.update(xid, upd); n++; } catch { /* the rest still go on */ }
   }
+  return n;
+}
+
+// After a supplier's name is corrected, the documents whose supplier looks like it (or like the name it
+// had before, or has the same company number) are offered to take the corrected name, ticked in a list.
+async function offerSupplierFix(oldName, rec, id) {
+  const like = records.map((x) => ({ x, score: Math.max(nameLikeness(x.supplier, rec.supplier), nameLikeness(x.supplier, oldName),
+      rec.supplierId && x.supplierId === rec.supplierId ? 1 : 0) }))
+    .filter(({ x, score }) => x.id !== id && x.supplier && x.supplier !== rec.supplier && score >= 0.3)
+    .sort((a, b) => b.score - a.score).slice(0, 40).map(({ x }) => x);
+  if (!like.length) return;
+  const ids = await pickDocs(`לעדכן את שם הספק ל"${rec.supplier}" גם במסמכים הדומים?`,
+    "סמנו את המסמכים של אותו ספק. מסמך שאינו שלו, בטלו את הסימון שלו.", like);
+  if (!ids.length) return;
+  const n = await applyToDocs(ids, (x) => ({
+    supplier: rec.supplier,
+    ...(!x.supplierId && rec.supplierId ? { supplierId: rec.supplierId } : {}),
+    ...(!x.category && rec.category ? { category: rec.category } : {}),
+  }));
   toast(`שם הספק עודכן ב-${n} מסמכים`);
+}
+
+// After the service type, the journal account, the company number or the document type of one document
+// is changed, the supplier's other documents that differ are offered the same, ticked in a list.
+const SUPPLIER_FIELDS = [["category", "סוג שירות"], ["account", "חשבון חובה"], ["supplierId", "ח.פ / ע.מ"], ["docType", "סוג מסמך"]];
+async function offerSameSupplier(before, rec, id) {
+  const valueOf = (x, k) => (k === "account" ? accountOf(x) : x[k] || "");
+  const changed = SUPPLIER_FIELDS.filter(([k]) => rec[k] && rec[k] !== valueOf(before, k));
+  if (!changed.length || !rec.supplier) return;
+  const others = records.filter((x) => x.id !== id && sameSupplier(rec, x) && changed.some(([k]) => valueOf(x, k) !== rec[k])).slice(0, 60);
+  if (!others.length) return;
+  const show = (k, v) => (k === "account" ? `${v} · ${accountName(v)}` : v);
+  const what = changed.map(([k, label]) => `${label}: <b>${esc(show(k, rec[k]))}</b>`).join(" · ");
+  const ids = await pickDocs(`לשנות גם ב-${others.length} מסמכים נוספים של "${rec.supplier}"?`,
+    `${what}<br>מסמך שלא צריך את השינוי, בטלו את הסימון שלו.`, others);
+  if (!ids.length) return;
+  const n = await applyToDocs(ids, () => Object.fromEntries(changed.flatMap(([k]) =>
+    k === "account" ? [["account", rec.account], ["accountBy", "hand"]] : [[k, rec[k]]])));
+  toast(`עודכנו ${n} מסמכים של ${rec.supplier}`);
 }
 $("entryForm").onsubmit = (e) => { e.preventDefault(); saveEntry(false); };
 $("approveBtn").onclick = () => saveEntry(true);
