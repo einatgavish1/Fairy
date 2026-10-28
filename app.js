@@ -460,9 +460,6 @@ const FIELDS = [
   { k: "date", label: "תאריך", type: "date", need: true },
   { k: "supplier", label: "ספק", need: true },
   { k: "supplierId", label: "ח.פ / ע.מ" },
-  // every service type the app knows, and any other already given to a document
-  { k: "category", label: "סוג שירות", need: true,
-    options: () => [...new Set([...CATEGORY_NAMES, ...records.map((r) => r.category).filter(Boolean)])] },
   { k: "docType", label: "סוג מסמך", options: () => DOC_TYPE_NAMES },
   { k: "docNo", label: "מספר מסמך" },
   { k: "amount", label: "סכום כולל מע״מ (₪)", type: "number", need: true },
