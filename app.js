@@ -1304,7 +1304,8 @@ const jDate = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slic
 // The balance date (the fourth): a document from before the year counts from its first day.
 const balanceDate = (iso, year) => (iso && year && iso < `${year}-01-01` ? `${year}-01-01` : iso);
 
-function journalLines() {
+// The year's lines, before the filters.
+function yearLines() {
   const year = $("jYear").value;
   return records.filter((r) => inScope(r) && (!year || (r.date || "").startsWith(year)))
     .map((r) => ({
@@ -1313,6 +1314,37 @@ function journalLines() {
       debit: accountOf(r), credit: OWNER_ACCOUNT, amount: r.amount || 0, ref: r.docNo || "",
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+const J_FILTERS = ["jSearch", "jMonth", "jAcc", "jStatus", "jMin", "jMax"];
+const J_MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
+
+// The lines shown: the year's lines through the search, month, account, state and amount filters.
+function journalLines(base = yearLines()) {
+  const q = $("jSearch").value.trim().toLowerCase(), month = $("jMonth").value, acc = $("jAcc").value, status = $("jStatus").value;
+  const min = $("jMin").value === "" ? null : +$("jMin").value, max = $("jMax").value === "" ? null : +$("jMax").value;
+  return base.filter((l) => {
+    if (month && l.date.slice(5, 7) !== month) return false;
+    if (acc && l.debit !== acc) return false;
+    if (status === "review" && !needsReview(l.r)) return false;
+    if (status === "ok" && needsReview(l.r)) return false;
+    if (status === "hand" && !byHand(l.r)) return false;
+    if (status === "guessed" && byHand(l.r)) return false;
+    if (min != null && l.amount < min) return false;
+    if (max != null && l.amount > max) return false;
+    if (q) {
+      const hay = [l.r.supplier, l.r.details, l.r.fileName, l.ref, l.debit, accountName(l.debit), String(l.amount), jDate(l.date)].join(" ").toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+// Keeps a list's choice when it is still there after the options change.
+function fillPairs(id, options) {
+  const sel = $(id), cur = sel.value;
+  sel.innerHTML = options.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join("");
+  sel.value = options.some(([v]) => v === cur) ? cur : "";
 }
 
 // The debit account and its name can both be clicked to change it; one picked by hand has a solid frame,
@@ -1325,7 +1357,17 @@ function renderJournal() {
   const cur = $("jYear").value;
   $("jYear").innerHTML = '<option value="">כל השנים</option>' + years.map((y) => `<option>${y}</option>`).join("");
   $("jYear").value = years.includes(cur) ? cur : (years[0] || "");
-  const lines = journalLines();
+  const base = yearLines();
+  const months = [...new Set(base.map((l) => l.date.slice(5, 7)).filter(Boolean))].sort();
+  fillPairs("jMonth", [["", "כל החודשים"], ...months.map((m) => [m, J_MONTHS[+m - 1] || m])]);
+  const accs = [...new Set(base.map((l) => l.debit).filter(Boolean))].sort();
+  fillPairs("jAcc", [["", "כל החשבונות"], ...accs.map((a) => [a, `${a} · ${accountName(a)}`])]);
+  const lines = journalLines(base);
+  const filtered = J_FILTERS.some((id) => $(id).value !== "");
+  $("jClear").hidden = !filtered;
+  const sum = lines.reduce((s, l) => s + l.amount, 0);
+  $("jShown").textContent = filtered ? `מוצגות ${lines.length} מתוך ${base.length} שורות` : `${lines.length} שורות`;
+  $("jSum").textContent = sum.toLocaleString("he-IL", { maximumFractionDigits: 2 });
   $("jRows").innerHTML = lines.map((l) => `<tr data-id="${l.r.id}"${needsReview(l.r) ? ' class="dup"' : ""}>
       <td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.balance)}</td>
       <td>${needsReview(l.r) ? '<span title="מסמך לבדיקה">⚠️</span> ' : ""}${esc(l.details)}</td>
@@ -1337,6 +1379,8 @@ function renderJournal() {
   $("jEmpty").hidden = lines.length > 0;
 }
 $("jYear").addEventListener("input", renderJournal);
+J_FILTERS.forEach((id) => $(id).addEventListener("input", renderJournal));
+$("jClear").onclick = () => { J_FILTERS.forEach((id) => { $(id).value = ""; }); renderJournal(); };
 
 // Clicking the account turns it into a list of the expense accounts; picking one saves it on the document.
 $("jRows").addEventListener("click", (e) => {

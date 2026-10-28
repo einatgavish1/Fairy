@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20">
+<link rel="stylesheet" href="style.css?v=21">
 </head>
 <body>
 
@@ -186,12 +186,29 @@
       </div>
     </div>
     <p class="hint">כל מסמך הוא שורת הוצאה. חשבון החובה נקבע לפי סוג הפריט שבמסמך; לחיצה על החשבון או על התאור שלו מאפשרת לשנות אותו. לחיצה על שאר השורה פותחת את המסמך.</p>
+    <!-- Filters; the Excel export takes only the lines shown. -->
+    <div class="toolbar">
+      <input type="search" id="jSearch" placeholder="חיפוש ספק, אסמכתא, חשבון, סכום…">
+      <select id="jMonth" title="חודש"></select>
+      <select id="jAcc" title="חשבון חובה"></select>
+      <select id="jStatus" title="מצב">
+        <option value="">כל השורות</option>
+        <option value="review">⚠️ לבדיקה בלבד</option>
+        <option value="ok">✓ תקינות בלבד</option>
+        <option value="guessed">חשבון שנקבע אוטומטית</option>
+        <option value="hand">חשבון שנבחר ביד</option>
+      </select>
+      <input type="number" id="jMin" placeholder="מסכום" min="0" step="any" class="j-amount">
+      <input type="number" id="jMax" placeholder="עד סכום" min="0" step="any" class="j-amount">
+      <button type="button" class="ghost" id="jClear" hidden>✕ ניקוי הסינון</button>
+    </div>
     <div class="tablewrap">
       <table class="journal">
         <thead><tr><th></th><th></th><th></th><th></th><th>ספק / פרטים (מוגבל ל 24 תווים)</th><th>חובה</th><th>זכות</th><th class="num">סכום</th><th>אסמכתא</th><th>תאור חשבון חובה</th></tr></thead>
         <tbody id="jRows"></tbody>
+        <tfoot><tr><td colspan="7" id="jShown"></td><td class="num" id="jSum"></td><td colspan="2"></td></tr></tfoot>
       </table>
-      <p class="empty" id="jEmpty" hidden>אין מסמכים בשנה הזו.</p>
+      <p class="empty" id="jEmpty" hidden>אין שורות שמתאימות לסינון.</p>
     </div>
   </main>
 
@@ -274,6 +291,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=27"></script>
+<script type="module" src="app.js?v=28"></script>
 </body>
 </html>
