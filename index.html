@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=22">
+<link rel="stylesheet" href="style.css?v=23">
 </head>
 <body>
 
@@ -259,6 +259,11 @@
     <div class="dlg-grid">
       <div class="dlg-preview" id="dlgPreview"></div>
       <div>
+        <div class="dlg-nav" id="dlgNav" hidden>
+          <button type="button" class="ghost" id="dlgPrev" title="המסמך הקודם ברשימה">→ הקודם</button>
+          <span class="soon" id="dlgPos"></span>
+          <button type="button" class="ghost" id="dlgNext" title="המסמך הבא ברשימה">הבא ←</button>
+        </div>
         <h2 id="dlgTitle">עריכת מסמך</h2>
         <p class="dup-warn" id="dlgWhy" hidden></p>
         <div class="fields" id="dlgFields"></div>
@@ -310,6 +315,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=29"></script>
+<script type="module" src="app.js?v=30"></script>
 </body>
 </html>

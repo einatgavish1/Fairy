@@ -969,7 +969,7 @@ function renderTable() {
     <td class="sel"><input type="checkbox" data-sel="${r.id}"${selected.has(r.id) ? " checked" : ""} aria-label="בחירה"></td>
     <td class="num">${showDate(r.date)}</td>
     <td>${esc(r.client) || '<span class="soon">ללא</span>'}</td>
-    <td>${typeTag(r)}${statusTag(r)}${esc(r.supplier) || `<span class="soon">${esc(r.fileName)}</span>`}${r.details ? `<small>${esc(r.details)}</small>` : ""}</td>
+    <td title="${esc([r.supplier, r.details].filter(Boolean).join(" · "))}">${typeTag(r)}${statusTag(r)}${esc(r.supplier) || `<span class="soon">${esc(r.fileName)}</span>`}${r.details ? `<small>${esc(r.details)}</small>` : ""}</td>
     <td>${r.category ? `<span class="tag">${esc(r.category)}</span>` : ""}</td>
     <td>${esc(r.docType)}${r.docNo ? `<small>מס׳ ${esc(r.docNo)}</small>` : ""}</td>
     <td class="num">${r.vat ? fmt(r.vat) : ""}</td>
@@ -989,7 +989,6 @@ function renderTable() {
 
 // One click handler for the whole list: the tick box marks, the bin deletes, anywhere else shows the
 // document in the side panel (on a phone, where there is no room beside the list, it opens it).
-const wide = () => matchMedia("(min-width: 1100px)").matches;
 $("rows").addEventListener("click", (e) => {
   const tr = e.target.closest("tr");
   if (!tr) return;
@@ -1003,12 +1002,8 @@ $("rows").addEventListener("click", (e) => {
     syncSelection();
     return;
   }
-  if (wide()) showSide(tr.dataset.id);
-  else openEntry(tr.dataset.id);
-});
-$("rows").addEventListener("dblclick", (e) => {
-  const tr = e.target.closest("tr");
-  if (tr && !e.target.closest("td.sel, [data-del]")) openEntry(tr.dataset.id);
+  current = tr.dataset.id;
+  openEntry(tr.dataset.id);
 });
 $("selAll").onchange = () => {
   for (const id of shownIds) $("selAll").checked ? selected.add(id) : selected.delete(id);
@@ -1122,11 +1117,36 @@ async function openEntry(id, fallback, plain = false) {
   $("dlgWhy").textContent = why ? `⚠️ ${why}` : "";
   $("dlgFileName").textContent = r.fileName || "";
   $("dlgPreview").innerHTML = '<p class="soon">טוען תמונה…</p>';
-  $("entryDlg").showModal();
+  // It opens straight on the whole screen: the picture on one half, the details on the other.
+  $("entryDlg").classList.add("full");
+  picZoom = 1;
+  const list = navList(), i = list.indexOf(id);
+  $("dlgNav").hidden = i < 0;
+  $("dlgPos").textContent = i < 0 ? "" : `${i + 1} מתוך ${list.length}`;
+  $("dlgPrev").disabled = i <= 0;
+  $("dlgNext").disabled = i < 0 || i >= list.length - 1;
+  if (!$("entryDlg").open) $("entryDlg").showModal();
   const src = await previewOf(id);
   if (editing !== id) return;
   dialogPicture(id, src, r);
 }
+
+// The documents in the list on show (the documents' list or the journal), to move between them in the window.
+function navList() {
+  const view = document.querySelector(".view-panel.view-active")?.dataset.view;
+  if (view === "docs") return shownIds;
+  if (view === "journal") return [...document.querySelectorAll("#jRows tr[data-id]")].map((tr) => tr.dataset.id);
+  return [];
+}
+const dlgStep = (d) => {
+  const list = navList(), next = list[list.indexOf(editing) + d];
+  if (!next) return;
+  current = next;
+  if (dupWith.has(next)) $("entryDlg").close();
+  openEntry(next);
+};
+$("dlgPrev").onclick = () => dlgStep(-1);
+$("dlgNext").onclick = () => dlgStep(1);
 
 // The document's picture in the dialog, with turning it and reading it again.
 function dialogPicture(id, src, r) {
@@ -1549,7 +1569,8 @@ function renderJournal() {
       <td>${pickable(l, esc(accountName(l.debit)), "acc-name")}</td></tr>`).join("");
   $("jEmpty").hidden = lines.length > 0;
 }
-$("jYear").addEventListener("input", renderJournal);
+// Another year starts from the full list: the filters are cleared.
+$("jYear").addEventListener("input", () => { J_FILTERS.forEach((id) => { $(id).value = ""; }); renderJournal(); });
 J_FILTERS.forEach((id) => $(id).addEventListener("input", renderJournal));
 $("jClear").onclick = () => { J_FILTERS.forEach((id) => { $(id).value = ""; }); renderJournal(); };
 
