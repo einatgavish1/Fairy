@@ -437,11 +437,13 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .home-card .new-client select { padding: 10px 8px; border-radius: 10px; border: 1px solid #e4cfc2; background: #fff; color: var(--brand-ink); }
 .journal tr.vat-line td { color: var(--muted); }
 /* the documents offered a corrected supplier's name */
-.sup-dlg { width: min(640px, calc(100vw - 32px)); }
+.sup-dlg { width: min(860px, calc(100vw - 32px)); }
 #supList { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
 .sup-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: rgba(255, 255, 255, .06); cursor: pointer; }
-.sup-row span { flex: 1; }
-.sup-row small { color: var(--muted); white-space: nowrap; }
+.sup-thumb { flex: 0 0 120px; height: 150px; display: grid; place-items: center; overflow: hidden; border-radius: 6px; background: #fff; }
+.sup-thumb img { width: 100%; height: 100%; object-fit: contain; object-position: top; cursor: zoom-in; }
+.sup-text { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.sup-text small { color: var(--muted); }
 /* the client's dealer type beside the year, and its history */
 .dealer-tag { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--glass-line); background: rgba(255, 255, 255, .08); }
 .dealer-tag .link { font-size: 13px; }

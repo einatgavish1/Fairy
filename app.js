@@ -1574,9 +1574,20 @@ async function offerSupplierFix(oldName, rec, id) {
     .sort((a, b) => b.score - a.score).slice(0, 40);
   if (!like.length) return;
   $("supTitle").textContent = `לעדכן את שם הספק ל"${rec.supplier}" גם במסמכים הדומים?`;
+  // each with its picture, to see whether it is that supplier's; a click on the picture enlarges it
   $("supList").innerHTML = like.map(({ x }) => `<label class="sup-row"><input type="checkbox" value="${esc(x.id)}" checked>
-    <span>${esc(x.supplier)}</span><small>${esc([x.client, showDate(x.date), x.amount ? fmt(x.amount) : ""].filter(Boolean).join(" · "))}</small></label>`).join("");
+    <span class="sup-thumb" data-pic="${esc(x.id)}"><small class="soon">טוען…</small></span>
+    <span class="sup-text"><b>${esc(x.supplier)}</b><small>${esc([x.client, showDate(x.date), x.amount ? fmt(x.amount) : "", x.docType].filter(Boolean).join(" · "))}</small></span></label>`).join("");
   $("supDlg").showModal();
+  for (const { x } of like) {
+    previewOf(x.id).then((src) => {
+      const box = $("supList").querySelector(`[data-pic="${CSS.escape(x.id)}"]`);
+      if (!box) return;
+      box.innerHTML = src ? `<img src="${src}" alt="" title="לחיצה מגדילה">` : '<small class="soon">אין תמונה</small>';
+      const img = box.querySelector("img");
+      if (img) img.onclick = (e) => { e.preventDefault(); zoom(src); };
+    });
+  }
   const ok = await new Promise((done) => {
     $("supYes").onclick = () => done(true);
     $("supNo").onclick = () => done(false);
