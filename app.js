@@ -1,9 +1,9 @@
 import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview } from "./extract.js?v=12";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview } from "./extract.js?v=13";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
 import { EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=5";
-import { fillFromPath } from "./recheck.js?v=3";
-import { parseComparative, comparativeFromDocs, buildFiling, filingSheet, comparativeSheet, lineOf } from "./report.js?v=1";
+import { fillFromPath } from "./recheck.js?v=4";
+import { parseComparative, comparativeFromDocs, buildFiling, filingSheet, comparativeSheet, lineOf } from "./report.js?v=2";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => (n < 0 ? "-" : "") + "₪" + Math.abs(n || 0).toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -1675,7 +1675,6 @@ function renderFiling() {
   $("filingMain").hidden = none;
   if (none || !filing) return;
   $("fId").value = filing.idNumber || "";
-  $("fFileNo").value = filing.fileNo || "";
   $("fCar").value = filing.carPct;
   $("fMeal").value = filing.mealPct;
   $("fSource").textContent = !filing.lines.length ? "עוד אין דוח השוואתי לשנה הזו. מייבאים אותו מאקסל, או מחשבים מהמסמכים במערכת."
@@ -1690,29 +1689,36 @@ const signed = (n) => (n < 0 ? `(${Math.round(-n).toLocaleString("he-IL")})` : M
 
 // The filing report on screen as it looks in the workbook: the labels, the lines in the middle column,
 // the totals in the last one.
+// The lines shown: an expense line with nothing in it stays (empty), except כיבוד, which shows only
+// when there is some (it is not in the printed layout otherwise).
+const filingExpenses = (f) => f.expenses.filter(([l, v]) => l !== "כיבוד" || v);
+
 function filingHtml() {
   const f = buildFiling(filing.lines, filing);
   const row = (label, b = "", d = "", cls = "") => `<tr class="${cls}"><td>${esc(label)}</td><td class="num">${b}</td><td class="num">${d}</td></tr>`;
-  const y = filing.year;
+  const y = esc(String(filing.year));
+  const exp = filingExpenses(f);
   return `<div class="filing-sheet">
-    <h3>${esc(filing.client)}   - תעודת זהות ${esc(filing.idNumber || "")}</h3>
-    <h3>תיק מספר ${esc(filing.fileNo || "")}</h3>
+    <h3>${esc(filing.client)}  - תעודת זהות ${esc(filing.idNumber || "")}</h3>
     <h3 class="fs-title">דוח הכנסות והוצאות לשנת המס ${y}</h3>
     <table>
       <thead><tr><th></th><th class="num">שקלים חדשים</th><th class="num">שקלים חדשים</th></tr></thead>
       <tbody>
         ${row("הכנסות", "", shekel(f.income), "b line")}
+        ${row("", "", "", "gap")}
         ${f.stock ? row("שינויים במלאי", shekel(f.stock)) : ""}
         ${row("קניות אחרות", shekel(f.purchases), "", "under-b")}
         ${row("עלות ההכנסות", "", shekel(f.cost), "b line")}
         ${row("רווח גולמי", "", shekel(f.gross), "b")}
-        ${row("הוצאות  מכירה הנהלה וכלליות", "", "", "b gap")}
-        ${f.expenses.map(([l, v], i) => row(l, shekel(v), "", i === f.expenses.length - 1 ? "under-b" : "")).join("")}
-        ${row(" הוצאות מכירה הנהלה וכלליות", "", shekel(f.expenseTotal), "b line")}
-        ${row(f.result < 0 ? "הפסד לשנה" : "רווח לשנה", "", signed(f.result), "b")}
-        ${row("תאומים ", "", "", "b gap")}
-        ${row(`הוצאות רכב (${filing.carPct}%)`, shekel(f.carAdj), "", "under-b")}
-        ${row(`כיבודים (${filing.mealPct}%)`, shekel(f.mealAdj), "", "under-b")}
+        ${row("", "", "", "gap")}
+        ${row("הוצאות  מכירה הנהלה וכלליות", "", "", "b")}
+        ${exp.map(([l, v], i) => row(l, v ? shekel(v) : "", "", i === exp.length - 1 ? "under-b" : "")).join("")}
+        ${row("הוצאות מכירה הנהלה וכלליות", "", shekel(f.expenseTotal), "b line")}
+        ${row(f.result < 0 ? "הפסד לשנה" : "רווח לשנה", "", signed(f.result), "b line")}
+        ${row("", "", "", "gap")}
+        ${row("תאומים", "", "", "b")}
+        ${row("הוצאות רכב", shekel(f.carAdj), "", f.mealAdj ? "" : "under-b")}
+        ${f.mealAdj ? row("כיבודים", shekel(f.mealAdj), "", "under-b") : ""}
         ${row("", "", shekel(f.adjTotal), "line")}
         ${row(f.final < 0 ? `הפסד מעסק לשנת ${y} מקוזז מהכנסה משכר` : `רווח מעסק לשנת ${y}`, "", signed(f.final), "b total")}
       </tbody>
@@ -1731,7 +1737,7 @@ function comparativeHtml() {
 }
 
 $("fYear").addEventListener("input", () => loadFiling($("fYear").value));
-for (const [id, key, isNum] of [["fId", "idNumber"], ["fFileNo", "fileNo"], ["fCar", "carPct", true], ["fMeal", "mealPct", true]]) {
+for (const [id, key, isNum] of [["fId", "idNumber"], ["fCar", "carPct", true], ["fMeal", "mealPct", true]]) {
   $(id).addEventListener("change", () => {
     if (!filing) return;
     filing[key] = isNum ? +$(id).value || 0 : $(id).value.trim();

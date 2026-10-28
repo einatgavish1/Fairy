@@ -432,8 +432,8 @@ const TOTAL_KEYS = [
   [new RegExp(`סה${Q}כ\\s*לתשלום|סך\\s*הכל\\s*לתשלום|יתרה\\s*לתשלום|סכום\\s*לתשלום|total\\s*due|amount\\s*due|grand\\s*total|balance\\s*due`, "i"), 100],
   [new RegExp(`(?:סה${Q}כ|סך\\s*הכו?ל)\\s*(?:כולל|כ\\.)\\s*מע${Q}מ|total\\s*incl`, "i"), 90],
   [/לתשלום|שולם|סכום\s*ששולם|total\s*paid|amount\s*paid/i, 75],
-  [new RegExp(`סה${Q}כ|סך\\s*הכל|סך\\s*הכול|\\btotal\\b`, "i"), 55],
-  [/סכום|\bamount\b|\bsum\b/i, 30],
+  [new RegExp(`סה${Q}כ|ס[ךד]\\s*הכו?ל|\\btotal\\b`, "i"), 55],
+  [/סכום|קניה|\bamount\b|\bsum\b/i, 30],
 ];
 const MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
 const MONTHS_EN = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
@@ -482,8 +482,16 @@ function amountsIn(line) {
 const GROSS_RE = new RegExp(`סה${Q}כ|סך\\s*הכו?ל|לתשלום|\\btotal\\b`, "i");
 const isGrossLine = (line) => GROSS_RE.test(line);
 
+// "סה"כ 2 פריטים" counts items, it is not money.
+const ITEM_COUNT = /\d+\s*(?:פריטים|פריט|שורות|יחידות|מוצרים|items?)/gi;
+
 function findTotal(lines) {
   let best = null;
+  lines = lines.map((l) => l.replace(ITEM_COUNT, " "));
+  // On a receipt the total is printed several times (total, paid, the card slip): when the keyword
+  // lines give only a tiny number (a misread line), an amount printed three times or more wins.
+  const seen = {};
+  for (const x of lines.flatMap(amountsIn)) if (x.dec) seen[x.n] = (seen[x.n] || 0) + 1;
   lines.forEach((line, i) => {
     let score = 0;
     for (const [re, s] of TOTAL_KEYS) if (re.test(line)) { score = s; break; }
@@ -499,6 +507,8 @@ function findTotal(lines) {
     const rank = score + (nums.some((x) => x.dec) ? 8 : 0) + i / lines.length * 5;
     if (!best || rank > best.rank || (rank === best.rank && n > best.n)) best = { n, rank };
   });
+  const often = Object.entries(seen).sort((a, b) => b[1] - a[1] || b[0] - a[0])[0];
+  if (often && often[1] >= 3 && (!best || (best.n < 10 && +often[0] > best.n))) return +often[0];
   if (best) return best.n;
   const all = lines.flatMap(amountsIn).filter((x) => x.dec);
   return all.length ? Math.max(...all.map((x) => x.n)) : null;
@@ -581,6 +591,22 @@ function findCustomer(lines) {
   return "";
 }
 
+// Chains whose name, found anywhere on the page (often only in the logo), is the supplier.
+const CHAINS = [
+  ["סטימצקי", /סטימצקי|steimatzky/i], ["צומת ספרים", /צומת\s*ספרים/], ["שופרסל", /שופרסל|shufersal/i],
+  ["רמי לוי", /רמי\s*לוי/], ["יוחננוף", /יוחננוף/], ["ויקטורי", /ויקטורי/], ["אושר עד", /אושר\s*עד/],
+  ["סופר-פארם", /סופר[\s-]*פארם|super-?pharm/i], ["פז", /פז\s*(?:קמעונאות|חברת|נפט)|\byellow\b/i],
+  ["סונול", /סונול|sonol/i], ["דור אלון", /דור\s*אלון/], ["איקאה", /איקאה|\bikea\b/i], ["הום סנטר", /הום\s*סנטר/],
+  ["בזק", /בזק(?!\s*בינלאומי)/], ["פרטנר", /פרטנר\s*תקשורת/], ["סלקום", /סלקום|cellcom/i],
+  ["חברת החשמל", /חברת\s*החשמל|חשמל\s*לישראל/], ["Gett", /\bgett\b/i], ["WeWork", /wework/i],
+];
+const chainOf = (text) => CHAINS.find(([, re]) => re.test(text));
+// A name read from the page that already holds the chain's name stays as it is ("סטימצקי (2005) בע"מ").
+function supplierOf(lines, text, hint) {
+  const found = findSupplier(lines), chain = chainOf(text) || chainOf(hint);
+  return chain && !chain[1].test(found) ? chain[0] : found;
+}
+
 function findSupplier(lines) {
   // A company name usually ends with בע"מ / Ltd.
   const co = new RegExp(`([^:|]{2,50}?\\s*בע${Q}מ|[A-Za-z0-9 .&'-]{2,50}?\\b(?:Ltd|LTD|Inc|LLC|GmbH)\\.?)`);
@@ -653,7 +679,7 @@ function parseOne(text, hint = "") {
   const lines = text.split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
   const total = findTotal(lines);
   const vat = findVat(lines, total);
-  const supplier = findSupplier(lines);
+  const supplier = supplierOf(lines, text, hint);
   let docType = "";
   for (const [re, name] of DOC_TYPES) if (re.test(text)) { docType = name; break; }
   return {
@@ -662,7 +688,8 @@ function parseOne(text, hint = "") {
     vat,
     supplier,
     customer: findCustomer(lines),
-    supplierId: text.match(ID_RE)?.[1] || "",
+    // "51-374232-0": a company number written with dashes, even when its label was misread.
+    supplierId: text.match(ID_RE)?.[1] || text.match(/(?<![\d-])(5\d)-(\d{6})-(\d)(?![\d-])/)?.slice(1).join("") || "",
     docType,
     docNo: findDocNo(text),
     category: findCategory(text, supplier) || findCategory(hint, supplier),

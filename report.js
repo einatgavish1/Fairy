@@ -107,35 +107,50 @@ const RESULT = "#,##0;\\(#,##0\\)";
 
 // The filing report as an Excel sheet laid out like the workbook's "דוח להגשה", with its formulas.
 export function filingSheet(data) {
-  const XLSX = window.XLSX;
-  const { client, idNumber, fileNo, year, carPct, mealPct, f } = data;
+  const { client, idNumber, year, carPct, mealPct, f } = data;
   const ws = {};
   const put = (ref, v, z) => {
     if (v === "" || v == null) return;
     ws[ref] = typeof v === "number" ? { t: "n", v, z } : { t: "s", v };
   };
   const formula = (ref, f2, v, z) => (ws[ref] = { t: "n", f: f2, v, z });
-  put("A1", `${client}   - תעודת זהות ${idNumber || ""}`);
-  put("A2", `תיק מספר ${fileNo || ""}`);
-  put("A3", `דוח הכנסות והוצאות לשנת המס ${year}`);
-  put("B6", "שקלים חדשים"); put("D6", "שקלים חדשים");
-  put("A9", "הכנסות"); put("D9", f.income, NUM);
-  if (f.stock) { put("A12", "שינויים במלאי"); put("B12", f.stock, NUM); }
-  put("A13", "קניות אחרות"); put("B13", f.purchases, NUM);
-  put("A14", "עלות ההכנסות"); formula("D14", "SUM(B12:B13)", f.cost, NUM);
-  put("A15", "רווח גולמי"); formula("D15", "+D9-D14", f.gross, NUM);
-  put("A17", "הוצאות  מכירה הנהלה וכלליות");
-  f.expenses.forEach(([label, v], i) => { put(`A${18 + i}`, label); if (v) put(`B${18 + i}`, v, NUM); });
-  put("A28", " הוצאות מכירה הנהלה וכלליות"); formula("D28", "SUM(B17:B27)", f.expenseTotal, NUM);
-  put("A29", f.result < 0 ? "הפסד לשנה" : "רווח לשנה"); formula("D29", "+D15-D28", f.result, RESULT);
-  put("A31", "תאומים ");
-  put("A32", "הוצאות רכב "); formula("B32", `+B25*${carPct / 100}`, f.carAdj, NUM);
-  put("A33", "כיבודים"); formula("B33", `+B26*${mealPct / 100}`, f.mealAdj, NUM);
-  formula("D34", "+B32+B33", f.adjTotal, NUM);
-  put("A35", f.final < 0 ? `הפסד מעסק לשנת ${year} מקוזז מהכנסה משכר` : `רווח מעסק לשנת ${year}`);
-  formula("D35", "+D29+D34", f.final, RESULT);
-  ws["!ref"] = "A1:D35";
-  ws["!merges"] = [0, 1, 2].map((r) => ({ s: { r, c: 0 }, e: { r, c: 3 } }));
+  put("A1", `${client}  - תעודת זהות ${idNumber || ""}`);
+  put("A2", `דוח הכנסות והוצאות לשנת המס ${year}`);
+  put("B4", "שקלים חדשים"); put("D4", "שקלים חדשים");
+  put("A6", "הכנסות"); put("D6", f.income, NUM);
+  let r = 8;
+  const first = r;
+  if (f.stock) { put(`A${r}`, "שינויים במלאי"); put(`B${r}`, f.stock, NUM); r++; }
+  put(`A${r}`, "קניות אחרות"); put(`B${r}`, f.purchases, NUM);
+  put(`A${++r}`, "עלות ההכנסות"); formula(`D${r}`, `SUM(B${first}:B${r - 1})`, f.cost, NUM);
+  const costRow = r;
+  put(`A${++r}`, "רווח גולמי"); formula(`D${r}`, `+D6-D${costRow}`, f.gross, NUM);
+  const grossRow = r;
+  r += 2;
+  put(`A${r}`, "הוצאות  מכירה הנהלה וכלליות");
+  const expStart = r + 1, at = {};
+  // כיבוד is a line only when there is some, as on the screen.
+  for (const [label, v] of f.expenses) {
+    if (label === "כיבוד" && !v) continue;
+    put(`A${++r}`, label); if (v) put(`B${r}`, v, NUM);
+    at[label] = r;
+  }
+  put(`A${++r}`, "הוצאות מכירה הנהלה וכלליות"); formula(`D${r}`, `SUM(B${expStart}:B${r - 1})`, f.expenseTotal, NUM);
+  const expRow = r;
+  put(`A${++r}`, f.result < 0 ? "הפסד לשנה" : "רווח לשנה"); formula(`D${r}`, `+D${grossRow}-D${expRow}`, f.result, RESULT);
+  const resultRow = r;
+  r += 2;
+  put(`A${r}`, "תאומים");
+  put(`A${++r}`, "הוצאות רכב"); formula(`B${r}`, `+B${at["אחזקת רכב"]}*${carPct / 100}`, f.carAdj, NUM);
+  const adjStart = r;
+  if (at["כיבוד"]) { put(`A${++r}`, "כיבודים"); formula(`B${r}`, `+B${at["כיבוד"]}*${mealPct / 100}`, f.mealAdj, NUM); }
+  formula(`D${++r}`, `SUM(B${adjStart}:B${r - 1})`, f.adjTotal, NUM);
+  const adjRow = r;
+  r += 2;
+  put(`A${r}`, f.final < 0 ? `הפסד מעסק לשנת ${year} מקוזז מהכנסה משכר` : `רווח מעסק לשנת ${year}`);
+  formula(`D${r}`, `+D${resultRow}+D${adjRow}`, f.final, RESULT);
+  ws["!ref"] = `A1:D${r}`;
+  ws["!merges"] = [0, 1].map((r) => ({ s: { r, c: 0 }, e: { r, c: 3 } }));
   ws["!cols"] = [33, 15, 1.25, 15].map((wch) => ({ wch }));
   return ws;
 }
