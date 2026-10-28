@@ -13,7 +13,8 @@
       "**/.*/**",
       "**/node_modules/**",
       "*.log",
-      "functions/**"
+      "functions/**",
+      "scripts/**"
     ],
     "headers": [
       {

@@ -399,29 +399,23 @@ const FX = {
 const FX_CODES = Object.keys(FX);
 const foreign = (r) => !!r.currency && r.currency !== "ILS" && !!FX[r.currency];
 const BOI_PAGE = "https://www.boi.org.il/roles/markets/exchangerates/";
-const rateCache = new Map();
+// The rates come from rates.json, published with the site (scripts/update-rates.mjs pulls them from the
+// Bank of Israel, which does not answer a web page directly). -> { rate, day } or null.
+let ratesFile = null;
 async function boiRate(currency, date) {
-  const key = `${currency}|${date}`;
-  if (rateCache.has(key)) return rateCache.get(key);
-  const from = new Date(Date.parse(date) - 12 * 864e5).toISOString().slice(0, 10);
-  const url = `https://edge.boi.org.il/FusionEdgeServer/sdmx/v2/data/dataflow/BOI.STATISTICS/EXR/1.0/RER_${currency}_ILS?format=csv&startperiod=${from}&endperiod=${date}`;
-  const job = (async () => {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      const [head, ...rows] = (await res.text()).trim().split(/\r?\n/).map((l) => l.split(",").map((c) => c.replace(/^"|"$/g, "")));
-      const iDay = head.indexOf("TIME_PERIOD"), iVal = head.indexOf("OBS_VALUE");
-      if (iDay < 0 || iVal < 0) return null;
-      const got = rows.map((r) => ({ day: r[iDay], rate: parseFloat(r[iVal]) }))
-        .filter((r) => r.day <= date && r.rate > 0).sort((a, b) => a.day.localeCompare(b.day)).pop();
-      return got || null;
-    } catch { return null; }
-  })();
-  rateCache.set(key, job);
-  const got = await job;
-  if (!got) rateCache.delete(key);
-  return got;
+  ratesFile ??= fetch("./rates.json", { cache: "no-cache" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const file = await ratesFile;
+  if (!file) { ratesFile = null; return null; }
+  const days = file.rates?.[currency];
+  if (!days || !date || date > file.updated) return null;
+  // the day itself, or the last day with a rate before it (none on weekends and holidays), up to two weeks back
+  for (let i = 0; i <= 14; i++) {
+    const day = new Date(Date.parse(date) - i * 864e5).toISOString().slice(0, 10);
+    if (days[day]) return { rate: days[day], day };
+  }
+  return null;
 }
+const ratesUpdated = async () => (await ratesFile)?.updated || "";
 // Fills a foreign-currency record's shekel amount (and VAT) from its amount as paid: at the rate typed
 // by hand, or at the representative rate of its date. -> true when it has a rate.
 async function convertCurrency(rec, { refetch = false } = {}) {
@@ -1297,7 +1291,8 @@ async function fillRate(id) {
   const got = await boiRate(f.currency, f.date);
   if (editing !== id) return;
   if (!got) {
-    $("dlgFx").innerHTML = `💱 שולם ${FX[f.currency].sign}${fmt2(f.origAmount)} (${f.currency}). לא הצלחתי לשלוף את השער מבנק ישראל: הקלידו אותו בשדה "שער יציג" · <a href="${BOI_PAGE}" target="_blank" rel="noopener">שערי בנק ישראל</a>`;
+    const upTo = await ratesUpdated();
+    $("dlgFx").innerHTML = `💱 שולם ${FX[f.currency].sign}${fmt2(f.origAmount)} (${f.currency}). אין שער יציג לתאריך הזה${upTo && f.date > upTo ? ` (השערים במערכת עד ${showDate(upTo)})` : ""}: הקלידו אותו בשדה "שער יציג" · <a href="${BOI_PAGE}" target="_blank" rel="noopener">שערי בנק ישראל</a>`;
     return;
   }
   const set = (k, v) => { const el = box.querySelector(`[name=${k}]`); if (el) el.value = v; };
@@ -1305,7 +1300,7 @@ async function fillRate(id) {
   set("amount", round2(f.origAmount * got.rate));
   box.dispatchEvent(new Event("input"));
   const shown = { ...f, rate: got.rate, rateDate: got.day, amount: round2(f.origAmount * got.rate) };
-  $("dlgFx").innerHTML = `${esc(fxNote(shown))} · נשלף מבנק ישראל, לחצו שמירה · <a href="${BOI_PAGE}" target="_blank" rel="noopener">שערי בנק ישראל</a>`;
+  $("dlgFx").innerHTML = `${esc(fxNote(shown))} · השער מבנק ישראל, לחצו שמירה · <a href="${BOI_PAGE}" target="_blank" rel="noopener">שערי בנק ישראל</a>`;
 }
 $("dlgFields").addEventListener("change", (e) => {
   if (["date", "currency", "origAmount"].includes(e.target.name)) {
