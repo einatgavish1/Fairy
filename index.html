@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=34">
+<link rel="stylesheet" href="style.css?v=35">
 </head>
 <body>
 
@@ -115,7 +115,10 @@
   <main class="panel view-panel" data-view="docs">
     <div class="panel-head">
       <h2>📋 מסמכי הוצאות <span class="page-client" id="pageClient2"></span></h2>
-      <div class="head-actions"><button class="ghost" id="exportBtn">ייצוא לאקסל</button></div>
+      <div class="head-actions">
+        <button class="ghost" id="driveLink" title="מקשר כל מסמך לקובץ המקורי שלו ב-Google Drive, כדי לראות את כל הקובץ מתוך התוכנה">🔗 קישור לקבצים בדרייב</button>
+        <button class="ghost" id="exportBtn">ייצוא לאקסל</button>
+      </div>
     </div>
     <div class="cards">
       <div class="card"><span>מסמכים</span><b id="sumCount">0</b></div>
@@ -422,6 +425,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=51"></script>
+<script type="module" src="app.js?v=52"></script>
 </body>
 </html>

@@ -39,6 +39,14 @@ if (CLOUD) {
   const readDocument = ff.httpsCallable(ff.getFunctions(app, "me-west1"), "readDocument", { timeout: 120000 });
   store = {
     auth, fa,
+    // Access to the names and places of the files in the person's Google Drive (not their content).
+    async driveToken() {
+      const provider = new fa.GoogleAuthProvider();
+      provider.addScope("https://www.googleapis.com/auth/drive.metadata.readonly");
+      provider.setCustomParameters({ login_hint: auth.currentUser.email });
+      const res = await fa.reauthenticateWithPopup(auth.currentUser, provider);
+      return fa.GoogleAuthProvider.credentialFromResult(res)?.accessToken || "";
+    },
     // Claude's reading of a document's picture (functions/index.js).
     aiRead: async (payload) => (await readDocument(payload)).data,
     watch: (cb, onErr) => fs.onSnapshot(col, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onErr),
@@ -963,6 +971,7 @@ async function processFile(file, path, batch) {
     if (reread) { id = reread.id; await store.update(id, rec); }
     else id = await store.add(rec, preview);
     savedNow.push({ ...rec, id });
+    if (driveAuth) findInDrive(path).then((driveId) => driveId && store.update(id, { driveId })).catch(() => {});
     inFlight.delete(hash);
     progDone(item, rec.status === "ok" ? "ok" : "review");
     const summary = [rec.client || "ללא לקוח", rec.supplier, showDate(rec.date), rec.amount ? fmt(rec.amount) : ""].filter(Boolean).map(esc).join(" · ");
@@ -1482,7 +1491,9 @@ $("dlgNext").onclick = () => dlgStep(1);
 // The document's picture in the dialog, with turning it and reading it again.
 function dialogPicture(id, src, r) {
   if (!src) {
-    $("dlgPreview").innerHTML = `<p class="soon">אין תמונה של המסמך. פתחו את הקובץ המקורי:<br><b class="ltr-path">${esc(r.fileName)}</b></p>`;
+    $("dlgPreview").innerHTML = `<p class="soon">אין תמונה של המסמך.<br><b class="ltr-path">${esc(r.fileName)}</b></p>
+      <div class="pic-tools"><button type="button" class="ghost" id="dlgWhole">📄 הקובץ המלא מהדרייב</button></div>`;
+    $("dlgWhole").onclick = () => showWholeFile(r);
     return;
   }
   const full = $("entryDlg").classList.contains("full");
@@ -1499,10 +1510,12 @@ function dialogPicture(id, src, r) {
     <div class="pic-tools">
       <button type="button" class="ghost" id="dlgRotate" title="סיבוב רבע סיבוב עם כיוון השעון">↻ סיבוב</button>
       <button type="button" class="ghost" id="dlgReread" title="קריאת הפרטים מהתמונה, כפי שהיא מוצגת עכשיו">📖 קריאה מחדש</button>
+      <button type="button" class="ghost" id="dlgWhole" title="הקובץ המלא, כל העמודים, מהקובץ שלו בדרייב">📄 כל הקובץ</button>
     </div>
     <small class="soon">${full ? "גלגלת עם Ctrl מגדילה ומקטינה, וגרירה מזיזה את התמונה."
       : "לחיצה על התמונה פורשת את החלון על כל המסך: התמונה בחצי אחד והפרטים בחצי השני."}</small>`;
   pictureZoom(full);
+  $("dlgWhole").onclick = () => showWholeFile(r);
   $("dlgRotate").onclick = async () => {
     const turned = await turnPicture(id, src);
     if (turned && editing === id) dialogPicture(id, turned, r);
@@ -2205,6 +2218,106 @@ $("dExport").onclick = () => {
   XLSX.writeFile(wb, `תרומות ${who}${$("dYear").value || "כל השנים"}.xlsx`);
 };
 
+// ---------- the original files, in Google Drive ----------
+// The files stay in the client's Google Drive; each document is linked to its file there (driveId), found
+// by its name and the folders it was uploaded from. The app only asks to see the names and places of the
+// files (drive.metadata.readonly), never their content: the whole file is shown by Drive's own viewer,
+// with the signed-in person's own access to it.
+let driveAuth = null; // { token, until }: Google gives it for an hour
+async function driveToken(ask = true) {
+  if (driveAuth && driveAuth.until > Date.now()) return driveAuth.token;
+  if (!ask || !store.driveToken) return "";
+  const token = await store.driveToken();
+  if (token) driveAuth = { token, until: Date.now() + 50 * 60e3 };
+  return token || "";
+}
+async function driveGet(path, params) {
+  const token = await driveToken(false);
+  if (!token) throw new Error("אין חיבור לדרייב");
+  const res = await fetch(`https://www.googleapis.com/drive/v3/${path}?${new URLSearchParams(params)}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 401) { driveAuth = null; throw new Error("החיבור לדרייב פג, התחברו שוב"); }
+  if (!res.ok) throw new Error(`הדרייב ענה ${res.status}`);
+  return res.json();
+}
+const driveFolders = new Map(); // folder id -> { name, parents }
+async function driveFolder(id) {
+  if (!driveFolders.has(id)) driveFolders.set(id, driveGet(`files/${encodeURIComponent(id)}`, { fields: "name,parents", supportsAllDrives: "true" }).catch(() => null));
+  return driveFolders.get(id);
+}
+// The file in Drive with the document's file name, in the folders it was uploaded from (as many of them,
+// from the nearest up, as match). A name found once, or one place that matches best, is taken; "" when
+// it is not found or cannot be told apart.
+async function findInDrive(fileName) {
+  const parts = String(fileName || "").split(" › ")[0].split("/").filter(Boolean);
+  const base = parts.pop();
+  if (!base) return "";
+  const q = `name = '${base.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}' and trashed = false and mimeType != 'application/vnd.google-apps.folder'`;
+  const { files = [] } = await driveGet("files", { q, fields: "files(id,parents)", pageSize: "20", supportsAllDrives: "true", includeItemsFromAllDrives: "true" });
+  if (!files.length) return "";
+  if (files.length === 1) return files[0].id;
+  const scored = [];
+  for (const f of files) {
+    let score = 0, parent = f.parents?.[0];
+    for (let i = parts.length - 1; i >= 0 && parent; i--) {
+      const folder = await driveFolder(parent);
+      if (!folder || folder.name !== parts[i]) break;
+      score++;
+      parent = folder.parents?.[0];
+    }
+    scored.push({ id: f.id, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0].score > 0 && scored[0].score > (scored[1]?.score ?? -1) ? scored[0].id : "";
+}
+// Links the documents not linked yet; -> { linked, missing }
+async function linkToDrive(list, onStep) {
+  let linked = 0, missing = 0;
+  for (const [i, r] of list.entries()) {
+    onStep?.(i, list.length);
+    try {
+      const id = await findInDrive(r.fileName);
+      if (id) { await store.update(r.id, { driveId: id }); linked++; } else missing++;
+    } catch (e) { if (/פג|אין חיבור/.test(e.message)) throw e; missing++; }
+  }
+  return { linked, missing };
+}
+const driveView = (id) => `https://drive.google.com/file/d/${encodeURIComponent(id)}/view`;
+const drivePreview = (id) => `https://drive.google.com/file/d/${encodeURIComponent(id)}/preview`;
+
+$("driveLink").onclick = async () => {
+  if (!store.driveToken) { toast("החיבור לדרייב עובד רק באתר עצמו"); return; }
+  const list = [...records, ...miscDocs].filter((r) => inScope(r) && !r.driveId && r.fileName);
+  if (!list.length) { toast("כל המסמכים כבר מקושרים לקבצים שלהם בדרייב"); return; }
+  try {
+    if (!(await driveToken())) return;
+    const btn = $("driveLink");
+    btn.disabled = true;
+    const { linked, missing } = await linkToDrive(list, (i, n) => (btn.textContent = `🔗 מחפש בדרייב… ${i + 1} מתוך ${n}`));
+    btn.disabled = false;
+    btn.textContent = "🔗 קישור לקבצים בדרייב";
+    toast(`קושרו ${linked} מסמכים לקבצים שלהם בדרייב${missing ? `. ${missing} לא נמצאו (בדקו שהם בדרייב של החשבון הזה)` : ""}`);
+  } catch (e) { toast("החיבור לדרייב נכשל: " + e.message); $("driveLink").disabled = false; $("driveLink").textContent = "🔗 קישור לקבצים בדרייב"; }
+};
+
+// The whole file inside the document's window (every page), or back to the picture.
+async function showWholeFile(r) {
+  let id = r.driveId;
+  if (!id) {
+    if (!store.driveToken) { toast("החיבור לדרייב עובד רק באתר עצמו"); return; }
+    try {
+      if (!(await driveToken())) return;
+      id = await findInDrive(r.fileName);
+    } catch (e) { toast("החיבור לדרייב נכשל: " + e.message); return; }
+    if (!id) { toast(`הקובץ "${(r.fileName || "").split("/").pop()}" לא נמצא בדרייב`); return; }
+    try { await store.update(r.id, { driveId: id }); } catch { /* shown anyway */ }
+  }
+  const frame = $("dlgPreview").querySelector(".pic-frame") || $("dlgPreview");
+  frame.innerHTML = `<iframe class="drive-frame" src="${drivePreview(id)}" title="הקובץ המלא" allow="autoplay"></iframe>`;
+  $("dlgPreview").querySelectorAll(".pic-zoom button[data-zoom]:not([data-zoom=exit])").forEach((b) => (b.hidden = true));
+  const tools = $("dlgPreview").querySelector(".pic-tools");
+  if (tools && !tools.querySelector(".drive-out")) tools.insertAdjacentHTML("beforeend", `<a class="ghost drive-out" href="${driveView(id)}" target="_blank" rel="noopener">↗ פתיחה בדרייב</a>`);
+}
+
 // ---------- other documents (מסמכים שונים) ----------
 // Documents of the client that are not expenses. Each keeps its picture and text, a name (from the file's
 // name, to change), and its kind, told from its name and text where it can be.
@@ -2245,7 +2358,8 @@ function renderMisc() {
         <input class="m-title" value="${esc(r.title || r.fileName || "")}" title="שם המסמך" aria-label="שם המסמך">
         <select class="m-type" aria-label="סוג המסמך">${MISC_NAMES.map((n) => `<option${n === r.docType ? " selected" : ""}>${esc(n)}</option>`).join("")}</select>
         <span class="g-foot"><small>${esc([showDate(r.date), r.fileName].filter(Boolean).join(" · "))}</small>
-          <button type="button" class="icon-del" data-mdel="${esc(r.id)}" title="מחיקת המסמך" aria-label="מחיקת המסמך">🗑️</button></span>
+          <span><button type="button" class="ghost m-whole" data-mwhole="${esc(r.id)}" title="הקובץ המלא בדרייב">📄 כל הקובץ</button>
+          <button type="button" class="icon-del" data-mdel="${esc(r.id)}" title="מחיקת המסמך" aria-label="מחיקת המסמך">🗑️</button></span></span>
       </div></div>`).join("");
   $("mEmpty").hidden = rows.length > 0;
   for (const r of rows) previewOf(r.id).then((src) => {
@@ -2258,6 +2372,21 @@ $("mYear").addEventListener("input", renderMisc);
 $("mList").addEventListener("click", async (e) => {
   const pic = e.target.closest("[data-mpic]");
   if (pic) { const src = await previewOf(pic.dataset.mpic); if (src) zoom(src); return; }
+  const whole = e.target.closest("[data-mwhole]");
+  if (whole) {
+    const r = miscDocs.find((x) => x.id === whole.dataset.mwhole);
+    if (!r) return;
+    // opened now, so the browser lets the new tab through; its address comes when the file is found
+    const tab = window.open("about:blank", "_blank");
+    let id = r.driveId;
+    try {
+      if (!id && (await driveToken())) id = await findInDrive(r.fileName);
+      if (id && !r.driveId) store.update(r.id, { driveId: id }).catch(() => {});
+    } catch (err) { toast("החיבור לדרייב נכשל: " + err.message); }
+    if (id) tab.location = driveView(id);
+    else { tab?.close(); toast(`הקובץ "${r.fileName}" לא נמצא בדרייב`); }
+    return;
+  }
   const del = e.target.closest("[data-mdel]");
   if (!del) return;
   const r = miscDocs.find((x) => x.id === del.dataset.mdel);
