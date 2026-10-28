@@ -1101,13 +1101,24 @@ function dialogPicture(id, src, r) {
     $("dlgPreview").innerHTML = `<p class="soon">אין תמונה של המסמך. פתחו את הקובץ המקורי:<br><b class="ltr-path">${esc(r.fileName)}</b></p>`;
     return;
   }
-  $("dlgPreview").innerHTML = `<img src="${src}" alt="">
+  const full = $("entryDlg").classList.contains("full");
+  $("dlgPreview").innerHTML = `
+    <div class="pic-zoom" ${full ? "" : "hidden"}>
+      <button type="button" class="ghost" data-zoom="out" title="הקטנה">−</button>
+      <span class="zoom-level"></span>
+      <button type="button" class="ghost" data-zoom="in" title="הגדלה">+</button>
+      <button type="button" class="ghost" data-zoom="fit" title="התאמה לרוחב">↔ התאמה</button>
+      <span class="grow"></span>
+      <button type="button" class="ghost" data-zoom="exit" title="חזרה לחלון הרגיל">⤡ חזרה</button>
+    </div>
+    <div class="pic-frame"><img src="${src}" alt="" draggable="false"></div>
     <div class="pic-tools">
       <button type="button" class="ghost" id="dlgRotate" title="סיבוב רבע סיבוב עם כיוון השעון">↻ סיבוב</button>
       <button type="button" class="ghost" id="dlgReread" title="קריאת הפרטים מהתמונה, כפי שהיא מוצגת עכשיו">📖 קריאה מחדש</button>
     </div>
-    <small class="soon">מסמך עקום? מסובבים עד שהוא ישר, ואז "קריאה מחדש". לחיצה על התמונה מגדילה אותה.</small>`;
-  $("dlgPreview").querySelector("img").onclick = () => zoom(src);
+    <small class="soon">${full ? "גלגלת עם Ctrl מגדילה ומקטינה, וגרירה מזיזה את התמונה."
+      : "לחיצה על התמונה פורשת את החלון על כל המסך: התמונה בחצי אחד והפרטים בחצי השני."}</small>`;
+  pictureZoom(full);
   $("dlgRotate").onclick = async () => {
     const turned = await turnPicture(id, src);
     if (turned && editing === id) dialogPicture(id, turned, r);
@@ -1179,6 +1190,58 @@ $("rereadAll").onclick = async () => {
   btn.textContent = "📖 קריאה חוזרת של המסמכים לבדיקה (כולל סיבוב)";
   toast(`נקראו שוב ${done} מסמכים${turned ? `, ${turned} סובבו` : ""}. ${fixed} מהם תקינים עכשיו.`);
 };
+
+// The picture in the document's window. In the normal window a click on it spreads the window over the
+// whole screen, split in two: the picture on one half, the details on the other. There the picture can
+// be enlarged and shrunk (the buttons, or the wheel with Ctrl), moved by dragging, and fitted back.
+let picZoom = 1;
+function pictureZoom(full) {
+  const box = $("dlgPreview"), frame = box.querySelector(".pic-frame"), img = frame?.querySelector("img");
+  if (!img) return;
+  const apply = () => {
+    img.style.width = full ? `${picZoom * 100}%` : "";
+    const level = box.querySelector(".zoom-level");
+    if (level) level.textContent = `${Math.round(picZoom * 100)}%`;
+  };
+  apply();
+  if (!full) { img.onclick = () => setFull(true); return; }
+  img.onclick = null;
+  // Enlarging keeps the point under the mouse (or the middle) where it was.
+  const zoomBy = (k, cx = frame.clientWidth / 2, cy = frame.clientHeight / 2) => {
+    const rx = (frame.scrollLeft + cx) / frame.scrollWidth, ry = (frame.scrollTop + cy) / frame.scrollHeight;
+    picZoom = Math.min(6, Math.max(0.3, picZoom * k));
+    apply();
+    frame.scrollLeft = rx * frame.scrollWidth - cx;
+    frame.scrollTop = ry * frame.scrollHeight - cy;
+  };
+  box.querySelector(".pic-zoom").onclick = (e) => {
+    const what = e.target.closest("[data-zoom]")?.dataset.zoom;
+    if (what === "in") zoomBy(1.25);
+    else if (what === "out") zoomBy(0.8);
+    else if (what === "fit") { picZoom = 1; apply(); frame.scrollTo(0, 0); }
+    else if (what === "exit") setFull(false);
+  };
+  frame.onwheel = (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const r = frame.getBoundingClientRect();
+    zoomBy(e.deltaY < 0 ? 1.15 : 0.87, e.clientX - r.left, e.clientY - r.top);
+  };
+  frame.onpointerdown = (e) => {
+    const sx = e.clientX, sy = e.clientY, left = frame.scrollLeft, top = frame.scrollTop;
+    frame.setPointerCapture(e.pointerId);
+    frame.classList.add("dragging");
+    frame.onpointermove = (m) => { frame.scrollLeft = left - (m.clientX - sx); frame.scrollTop = top - (m.clientY - sy); };
+    frame.onpointerup = () => { frame.onpointermove = null; frame.classList.remove("dragging"); };
+  };
+}
+function setFull(on) {
+  $("entryDlg").classList.toggle("full", on);
+  picZoom = 1;
+  const img = $("dlgPreview").querySelector(".pic-frame img");
+  if (img && editing) dialogPicture(editing, img.getAttribute("src"), records.find((x) => x.id === editing) || {});
+}
+$("entryDlg").addEventListener("close", () => $("entryDlg").classList.remove("full"));
 
 // Turns a document's saved picture a quarter turn clockwise and keeps it that way.
 async function turnPicture(id, src) {
