@@ -170,11 +170,14 @@ async function readPdf(file, onProgress) {
   // A scan saved as PDF has (almost) no text: read the page pictures instead.
   if (text.replace(/[^\p{L}\d]/gu, "").length < 40) {
     const parts = [];
+    let firstPage = null;
     for (let p = 1; p <= pages; p++) {
       const canvas = await renderPage(await pdf.getPage(p), 2200);
-      parts.push(await ocr(canvas, (x) => onProgress(0.1 + 0.9 * ((p - 1 + x) / pages), `מזהה טקסט בעמוד ${p}…`)));
+      if (p === 1) firstPage = canvas;
+      parts.push(await ocr(canvas, (x) => onProgress(0.1 + 0.8 * ((p - 1 + x) / pages), `מזהה טקסט בעמוד ${p}…`)));
     }
-    return { text: parts.join("\n"), preview, ocr: true };
+    const scanned = parts.join("\n");
+    return { text: scanned, alt: await secondReading(firstPage, scanned, onProgress), preview, ocr: true };
   }
   // A supplier is often known only by its logo (Gett, say), which is a picture, not text. When the text
   // doesn't tell the service, the top of the first page is read as a picture too, for the logo's words.
@@ -213,8 +216,48 @@ async function readImage(file, onProgress) {
   const canvas = drawScaled(img, 2400, true);
   const preview = toPreview(canvas);
   onProgress(0.05, "מכין את זיהוי הטקסט (בפעם הראשונה זה לוקח רגע)…");
-  const text = await ocr(canvas, (x) => onProgress(0.05 + 0.95 * x, "מזהה טקסט…"));
-  return { text, preview, ocr: true };
+  const text = await ocr(canvas, (x) => onProgress(0.05 + 0.75 * x, "מזהה טקסט…"));
+  return { text, alt: await secondReading(canvas, text, onProgress), preview, ocr: true };
+}
+
+// When the first reading of a picture misses the date, the amount or the supplier, the picture is read
+// again in black and white: each pixel against the light around it, which brings out faint print on a
+// shaded photo or a grey scan. parseText takes each detail from the clearer of the two readings.
+async function secondReading(canvas, text, onProgress) {
+  if (!canvas) return "";
+  const first = parseOne(text);
+  if (first.date && first.amount && first.supplier) return "";
+  try { return await ocr(binarize(canvas), (x) => onProgress(0.8 + 0.2 * x, "קורא שוב בניגודיות גבוהה…")); }
+  catch { return ""; }
+}
+
+// Adaptive threshold: a pixel is ink when it is darker than the mean of its neighbourhood (summed fast
+// with an integral image); the picture is first brought to about 2200 pixels on its long side.
+function binarize(src) {
+  const k = 2200 / Math.max(src.width, src.height);
+  const c = document.createElement("canvas");
+  c.width = Math.round(src.width * k);
+  c.height = Math.round(src.height * k);
+  const x = c.getContext("2d");
+  x.imageSmoothingQuality = "high";
+  x.filter = "grayscale(1)";
+  x.drawImage(src, 0, 0, c.width, c.height);
+  const W = c.width, H = c.height, img = x.getImageData(0, 0, W, H), p = img.data;
+  const sum = new Float64Array((W + 1) * (H + 1));
+  for (let y = 0; y < H; y++) {
+    let row = 0;
+    for (let i = 0; i < W; i++) { row += p[(y * W + i) * 4]; sum[(y + 1) * (W + 1) + i + 1] = sum[y * (W + 1) + i + 1] + row; }
+  }
+  const r = Math.round(Math.max(W, H) / 60);
+  for (let y = 0; y < H; y++) for (let i = 0; i < W; i++) {
+    const x0 = Math.max(0, i - r), x1 = Math.min(W - 1, i + r), y0 = Math.max(0, y - r), y1 = Math.min(H - 1, y + r);
+    const mean = (sum[(y1 + 1) * (W + 1) + x1 + 1] - sum[y0 * (W + 1) + x1 + 1] - sum[(y1 + 1) * (W + 1) + x0] + sum[y0 * (W + 1) + x0])
+      / ((x1 - x0 + 1) * (y1 - y0 + 1));
+    const v = p[(y * W + i) * 4] < mean * 0.88 ? 0 : 255;
+    p[(y * W + i) * 4] = p[(y * W + i) * 4 + 1] = p[(y * W + i) * 4 + 2] = v;
+  }
+  x.putImageData(img, 0, 0);
+  return c;
 }
 
 function loadImage(file) {
@@ -301,11 +344,11 @@ function fixVisualOrder(rows) {
 
 export const CATEGORIES = [
   ["חשמל", /חברת\s*החשמל|צריכת\s*חשמל|חשבון\s*חשמל|electric/i],
-  ["מים", /תאגיד\s*(?:ה)?מים|צריכת\s*מים|חשבון\s*מים|מקורות|מי\s+\S+\s+בע/],
+  ["מים", /תאגיד\s*(?:ה)?מים|צריכת\s*מים|חשבון\s*מים|מקורות|מי\s+\S+\s+בע|(?:^|\s)מים(?:\s|$)|מי\s*אביבים|הגיחון|מי\s*רעננה|מי\s*שבע|מי\s*כרמל|מי\s*מודיעין/],
   ["ארנונה", /ארנונה|עיריית|עירית|מועצה\s*(?:מקומית|אזורית)/],
   ["גז", /אמישראגז|סופרגז|פזגז|גז\s*ביתי|צריכת\s*גז/],
   ["תקשורת", /בזק|פרטנר|סלקום|הוט\s*(?:מובייל|טלקום|נט)|HOT|גולן\s*טלקום|אינטרנט|סלולר|טלפוניה|תקשורת|קווי|yes\s/i],
-  ["רכב ודלק", /תחנת\s*דלק|סונול|דור\s*אלון|(?:^|\s)פז(?:\s|$)|\bTEN\b|תדלוק|בנזין|סולר|מוסך|צמיגים|ליסינג|כביש\s*6|טסט\s*לרכב/i],
+  ["רכב ודלק", /תחנת\s*דלק|סונול|דור\s*אלון|(?:^|\s)פז(?:\s|$)|פז\s*קמעונאות|yellow|דלק\s*(?:חברת|מוטורס|קמעונאות)|אלון\s*רבוע|אוקטן|ליטרים|\bTEN\b|תדלוק|בנזין|סולר|מוסך|צמיגים|ליסינג|כביש\s*6|טסט\s*לרכב/i],
   ["חניה ותחבורה", /חניה|חנייה|חניון|פנגו|סלופארק|רב[\s-]?קו|רכבת\s*ישראל|מונית|מוניות|טאקסי|טקסי|נסיעה\s*מס|gett|uber|yango|יאנגו|דן\s*בדרום|אגד|מטרופולין|אפיקים|moovit|מוביט/i],
   ["ביטוח", /ביטוח|insurance/i],
   ["שכירות", /שכירות|שכ["״]ד|שכר\s*דירה|\brent\b/i],
@@ -316,7 +359,7 @@ export const CATEGORIES = [
   ["סופרמרקט", /שופרסל|רמי\s*לוי|יוחננוף|ויקטורי|אושר\s*עד|מגה\s*בעיר|סופרמרקט|מינימרקט/],
   ["שירותים מקצועיים", /ייעוץ|יעוץ|עו["״]ד|עורך\s*דין|עורכי\s*דין|רואה\s*חשבון|רואי\s*חשבון|הנהלת\s*חשבונות|consult|legal/i],
   ["פרסום ושיווק", /פרסום|שיווק|קמפיין|facebook\s*ads|google\s*ads|meta\s*platforms/i],
-  ["אחזקה ותיקונים", /תיקון|תחזוקה|אחזקה|שיפוץ|אינסטלציה|אינסטלטור|חשמלאי|ניקיון|הדברה/],
+  ["אחזקה ותיקונים", /תיקון|תחזוקה|אחזקה|שיפוץ|אינסטלציה|אינסטלטור|חשמלאי|ניקיון|ניקוי|הדברה|שתילי|משתלה|משתלת|פרחים|גינון|איקאה|ikea|(?:^|\s)ace(?:\s|$)|הום\s*סנטר|טמבור/i],
   ["נסיעות ולינה", /מלון|טיסה|אל\s*על|booking\.com|airbnb|hotel|flight/i],
   ["בריאות", /מרפאה|בית\s*מרקחת|סופר[\s-]?פארם|רופא|קופת\s*חולים|מכבי|כללית|מאוחדת|לאומית/],
   ["חינוך והשתלמויות", /קורס|השתלמות|הדרכה|סדנה|שכר\s*לימוד|course|training/i],
@@ -338,7 +381,8 @@ const MONTHS_EN = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep"
 function isoDate(d, m, y) {
   d = +d; m = +m; y = +y;
   if (y < 100) y += 2000;
-  if (y < 2000 || y > 2099 || m < 1 || m > 12 || d < 1 || d > 31) return "";
+  // A document is not from the future: a year ahead of this one is a misread digit ("2028" for 2025).
+  if (y < 2000 || y > new Date().getFullYear() || m < 1 || m > 12 || d < 1 || d > 31) return "";
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
@@ -503,7 +547,7 @@ function findSupplier(lines) {
   return "";
 }
 
-function findCategory(text, supplier) {
+export function findCategory(text, supplier) {
   let best = null;
   for (const [name, re] of CATEGORIES) {
     const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
@@ -525,7 +569,26 @@ function findDetails(lines) {
 }
 
 // hint: extra words that only help tell the service type (the logo's, read from the top of the page).
-export function parseText(text, hint = "") {
+// alt: a second reading of the same picture (see secondReading): every detail comes from the clearer
+// reading, and one it lacks from the other.
+export function parseText(text, hint = "", alt = "") {
+  const a = parseOne(text, hint);
+  if (!alt) return a;
+  const b = parseOne(alt, hint);
+  const [first, second] = clarity(text) >= clarity(alt) ? [a, b] : [b, a];
+  const out = { ...first };
+  for (const k of Object.keys(out)) if ((out[k] === "" || out[k] == null) && second[k] !== "" && second[k] != null) out[k] = second[k];
+  return out;
+}
+
+// How readable a reading came out: the words an invoice always has, and real Hebrew words, count; the
+// stray marks of a bad reading don't.
+function clarity(text) {
+  const words = text.split(/\s+/).filter((w) => /^[א-ת"״'׳.]{3,}$/.test(w)).length;
+  return hits(text) * 5 + words;
+}
+
+function parseOne(text, hint = "") {
   text = text.replace(/[‎‏‪-‮⁦-⁩]/g, ""); // invisible direction marks from OCR
   const lines = text.split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
   const total = findTotal(lines);

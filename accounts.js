@@ -127,7 +127,8 @@ const BY_ITEM = [
   [/ניקוי|ניקיון|תיקון|הדברה/, "613002"],
   [/ספה|כורסה|כיסא|כסא|שולחן|ארון|מדף|ריהוט|רהיט|שידה|מזרן/, "156000"],
   [/צעצוע|משחק|פאזל|בובה|ערכה\s*טיפולית|קלפים|יצירה|צבעי\s*(?:ידיים|גואש)/, "502000"],
-  [/שכירות|שכ["״']?ד|שכר\s*דירה|קליניקה|חדר\s*טיפול/, "612000"],
+  // renting the clinic is rent; equipment *for* the clinic ("ציוד קליניקה") is not
+  [/שכירות|שכ["״']?ד|שכר\s*דירה|השכרת\s*חדר|חדר\s*טיפול/, "612000"],
   [/חשמל/, "613003"],
   [/מים\s*וביוב|צריכת\s*מים|תאגיד\s*(?:ה)?מים|(?:^|\s)מים(?:\s|$)/, "613004"],
   [/ארנונה|עיריית|עירית|מועצה\s*(?:מקומית|אזורית)/, "613005"],
@@ -167,14 +168,44 @@ const BY_CATEGORY = {
   "חינוך והשתלמויות": "616001", "אחר": "630000",
 };
 
-// The account a document most likely belongs to: first by the item as the document describes it
-// (its details line, then the rest of its text), then by the supplier, and last by the service type.
+// The account a document most likely belongs to. The folders the file was kept in come first when they
+// name the kind plainly ("בית/חשמל", "רכב/דלק", "סלקום": the person's own filing, sure where a picture's
+// reading may not be); then the item as the document describes it (its details line); then a general
+// folder ("ציוד"); then the rest of its text and its supplier; and last the service type.
 // The service type's own name is left out of the words ("חניה ותחבורה" is not a parking item).
-export function suggestAccount(r, text = "") {
-  for (const words of [r.details, text, r.supplier]) {
-    if (!words) continue;
-    for (const [re, code] of BY_ITEM) if (re.test(words)) return code;
+const GENERAL = new Set(["613002", "630000"]);
+const ruleFor = (words) => (words ? (BY_ITEM.find(([re]) => re.test(words)) || [])[1] : undefined);
+export function suggestAccount(r, text = "", folders = "") {
+  const byFolder = ruleFor(folders);
+  if (byFolder && !GENERAL.has(byFolder)) return byFolder;
+  for (const words of [r.details, folders, text, r.supplier]) {
+    const code = ruleFor(words);
+    if (code) return code;
   }
   return BY_CATEGORY[r.category] || "630000";
 }
 export const accountOf = (r) => r.account || suggestAccount(r);
+
+// The service type an account stands for, for a document whose type could not be read.
+export function categoryOfAccount(code) {
+  const c = String(code);
+  if (c === "618006" || c === "619002") return "חניה ותחבורה";
+  if (/^(?:618|152)/.test(c)) return "רכב ודלק";
+  if (c === "613003") return "חשמל";
+  if (c === "613004") return "מים";
+  if (c === "613005") return "ארנונה";
+  if (c === "613006") return "גז";
+  if (c === "613001") return "ציוד משרדי";
+  if (/^(?:613|156)/.test(c)) return "אחזקה ותיקונים";
+  if (c === "614004" || c === "154000") return "מחשבים ואלקטרוניקה";
+  if (c === "614005") return "תוכנה ומנויים";
+  if (/^614/.test(c)) return "תקשורת";
+  if (c === "612000") return "שכירות";
+  if (/^615/.test(c)) return "שירותים מקצועיים";
+  if (/^616/.test(c)) return "חינוך והשתלמויות";
+  if (c === "619001") return "ביטוח";
+  if (c === "619010") return "כיבוד ומסעדות";
+  if (/^60/.test(c)) return "פרסום ושיווק";
+  if (/^5/.test(c)) return "קניות";
+  return "";
+}

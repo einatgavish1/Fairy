@@ -1,7 +1,8 @@
 import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=9";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=10";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
-import { EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=3";
+import { EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=5";
+import { fillFromPath } from "./recheck.js?v=1";
 import { parseComparative, comparativeFromDocs, buildFiling, filingSheet, comparativeSheet, lineOf } from "./report.js?v=1";
 
 const $ = (id) => document.getElementById(id);
@@ -197,17 +198,11 @@ const clientNames = () => [...new Set([...clients.map((c) => c.name), ...records
 const lastClient = () => { try { return localStorage.getItem("fairy-last-client") || ""; } catch { return ""; } };
 const needsReview = (r) => r.status === "review" || r.status === "failed" || dupOf.has(r.id);
 
+// The client lists show the names only.
 function clientOptions(selected) {
-  const label = (name) => {
-    const mine = name === ALL ? records : records.filter((r) => r.client === name);
-    const review = mine.filter(needsReview).length;
-    return `${mine.length} מסמכים${review ? `, ${review} לבדיקה` : ""}`;
-  };
   const opt = (value, text) => `<option value="${esc(value)}"${value === selected ? " selected" : ""}>${esc(text)}</option>`;
-  const unassigned = records.filter((r) => !r.client).length;
-  return opt(ALL, `📚 כל הלקוחות (${label(ALL)})`)
-    + clientNames().map((n) => opt(n, `${n} (${label(n)})`)).join("")
-    + (unassigned ? opt("", `❓ לא שויכו ללקוח (${unassigned})`) : "");
+  return opt(ALL, "כל הלקוחות") + clientNames().map((n) => opt(n, n)).join("")
+    + (records.some((r) => !r.client) ? opt("", "לא שויכו ללקוח") : "");
 }
 
 function showClients() {
@@ -265,7 +260,8 @@ $("homeAll").onclick = () => $("allDocsBtn").click();
 $("homeBtn").onclick = showClients;
 $("homeLogout").onclick = () => $("logoutBtn").click();
 
-$("clientForm").onsubmit = (e) => { e.preventDefault(); chooseClient($("clientSelect").value); };
+// "כניסה" opens the client's journal entries.
+$("clientForm").onsubmit = (e) => { e.preventDefault(); homeGo("journal"); };
 $("navClient").onchange = () => chooseClient($("navClient").value);
 
 async function addClient(name) {
@@ -725,7 +721,11 @@ async function processFile(file, path, batch) {
 
   let hash;
   try { hash = await fingerprint(file); } catch { hash = ""; }
-  const sameFile = hash && (inFlight.get(hash) || findDuplicate({ fileHash: hash })?.what);
+  // The same file again: one already in good order is skipped; one still waiting for review is read
+  // again (the reading may do better now) and its record gets what the new reading finds.
+  const existing = hash && !inFlight.get(hash) && records.find((r) => r.fileHash === hash);
+  const reread = existing && needsReview(existing) ? existing : null;
+  const sameFile = hash && !reread && (inFlight.get(hash) || findDuplicate({ fileHash: hash })?.what);
   if (sameFile) {
     progDone(item, "skipped");
     show("dup", `⏭️ <b>דולג: הקובץ הזה כבר קיים במערכת</b><br><small>${esc(sameFile)}</small>`, '<button class="ghost go-on">לקלוט בכל זאת</button>');
@@ -738,9 +738,9 @@ async function processFile(file, path, batch) {
   if (hash) inFlight.set(hash, path);
 
   // Read; a file that can't be read is still saved, so it can be opened and filled in by hand.
-  let text = "", preview = "", hint = "", failed = "";
+  let text = "", alt = "", preview = "", hint = "", failed = "";
   try {
-    ({ text, preview, hint = "" } = await oneAtATime(() => readFile(file, status)));
+    ({ text, alt = "", preview, hint = "" } = await oneAtATime(() => readFile(file, status)));
   } catch (e) {
     failed = e.message || "שגיאה בקריאה";
   }
@@ -750,31 +750,43 @@ async function processFile(file, path, batch) {
   } else {
     el.querySelector(".thumb").innerHTML = '<span class="soon">📄</span>';
   }
-  const found = failed ? {} : parseText(text, hint);
-  const rec = {
+  const found = failed ? {} : parseText(text, hint, alt);
+  let rec = {
     client: clientFor(found.customer), customer: found.customer || "",
     date: found.date || "", supplier: found.supplier || "", supplierId: found.supplierId || "",
     category: found.category || "", docType: found.docType || "", docNo: found.docNo || "",
     amount: found.amount ?? null, vat: found.vat ?? null, details: found.details || "",
     fileName: path, fileHash: hash,
+    // the text as read, so the document can be checked again later without the file
+    text: [text, alt].filter((t) => t && t.trim()).join("\n----\n").slice(0, 15000),
   };
+  if (reread) {
+    // What the new reading found wins over the old one; the client and an account chosen by hand stay.
+    const empty = (v) => v === "" || v == null;
+    const kept = Object.fromEntries(Object.keys(rec).filter((k) => empty(rec[k]) && !empty(reread[k])).map((k) => [k, reread[k]]));
+    rec = { ...rec, ...kept, client: reread.client || rec.client };
+    if (reread.accountBy === "hand") Object.assign(rec, { account: reread.account, accountBy: "hand" });
+  }
   if (!rec.category) rec.category = learnedCategory(rec);
-  // The journal account by the kind of item, read from the whole document while its text is at hand.
-  rec.account = suggestAccount(rec, text);
-  rec.accountBy = "auto";
-  const why = reviewReasons(rec, { noText: !failed && !text.trim(), failed });
+  // The date, the journal account and the service type from the folders and the file's name, where
+  // the document itself did not tell them (the account by the kind of item, from all its text).
+  fillFromPath(rec, `${text}\n${alt}`);
+  const why = reviewReasons(rec, { exceptId: reread?.id, noText: !failed && !text.trim() && !alt.trim(), failed });
   rec.status = failed ? "failed" : why.length ? "review" : "ok";
   rec.reviewWhy = why.join(" · ");
 
   try {
-    const id = await store.add(rec, preview);
+    let id;
+    if (reread) { id = reread.id; await store.update(id, rec); }
+    else id = await store.add(rec, preview);
     savedNow.push({ ...rec, id });
     inFlight.delete(hash);
     progDone(item, rec.status === "ok" ? "ok" : "review");
     const summary = [rec.client || "ללא לקוח", rec.supplier, showDate(rec.date), rec.amount ? fmt(rec.amount) : ""].filter(Boolean).map(esc).join(" · ");
     const open = `<button class="${rec.status === "ok" ? "ghost" : "primary"} open-it">${rec.status === "ok" ? "פתיחה" : "פתיחה ובדיקה"}</button>`;
-    if (rec.status === "ok") show("saved", `✅ <b>נשמר</b> · ${summary}`, open);
-    else show("review", `⚠️ <b>נשמר לבדיקה</b> · ${summary}<br><small>${esc(rec.reviewWhy)}</small>`, open);
+    const again = reread ? "נקרא מחדש ו" : "";
+    if (rec.status === "ok") show("saved", `✅ <b>${again}נשמר</b> · ${summary}`, open);
+    else show("review", `⚠️ <b>${again}נשמר לבדיקה</b> · ${summary}<br><small>${esc(rec.reviewWhy)}</small>`, open);
     el.querySelector(".open-it").onclick = () => openEntry(id, rec);
   } catch (e) {
     inFlight.delete(hash);
@@ -810,8 +822,7 @@ async function processSheet(file, path, batch) {
       fileName: `${path} › ${row.ref}`, fileHash: rowHash,
     };
     if (!rec.category) rec.category = learnedCategory(rec);
-    rec.account = suggestAccount(rec);
-    rec.accountBy = "auto";
+    fillFromPath(rec);
     const why = reviewReasons(rec);
     rec.status = why.length ? "review" : "ok";
     rec.reviewWhy = why.join(" · ");

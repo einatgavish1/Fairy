@@ -25,11 +25,12 @@ service cloud.firestore {
     function validDoc() {
       let d = request.resource.data;
       return d.keys().hasOnly(['client', 'date', 'supplier', 'supplierId', 'category', 'docType', 'docNo', 'details',
-                               'amount', 'vat', 'fileName', 'fileHash', 'customer', 'status', 'reviewWhy', 'account', 'accountBy', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
+                               'amount', 'vat', 'fileName', 'fileHash', 'customer', 'status', 'reviewWhy', 'account', 'accountBy', 'text', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
           && (d.amount == null || d.amount is number)
           && (d.vat == null || d.vat is number)
           && d.date is string && d.supplier is string && d.details is string
           && d.details.size() < 2000
+          && (!('text' in d) || (d.text is string && d.text.size() < 40000))
           && (!('status' in d) || d.status in ['ok', 'review', 'failed'])
           && (!('reviewWhy' in d) || (d.reviewWhy is string && d.reviewWhy.size() < 3000));
     }
