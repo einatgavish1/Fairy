@@ -1122,7 +1122,7 @@ function renderTable() {
   for (const id of [...selected]) if (!records.some((r) => r.id === id)) selected.delete(id);
   $("sortArrow").textContent = sortDir < 0 ? "▼" : "▲";
   $("rows").innerHTML = rows.map((r) => `<tr data-id="${r.id}" class="${needsReview(r) ? "dup" : ""}${selected.has(r.id) ? " picked" : ""}">
-    <td class="sel"><input type="checkbox" data-sel="${r.id}"${selected.has(r.id) ? " checked" : ""} aria-label="בחירה"></td>
+    <td class="sel"><span class="sel-box"><input type="checkbox" data-sel="${r.id}"${selected.has(r.id) ? " checked" : ""} aria-label="בחירה">${tickBtn(r)}</span></td>
     <td class="num">${showDate(r.date)}</td>
     <td>${esc(r.client) || '<span class="soon">ללא</span>'}</td>
     <td title="${esc([r.supplier, r.details].filter(Boolean).join(" · "))}">${typeTag(r)}${statusTag(r)}${esc(r.supplier) || `<span class="soon">${esc(r.fileName)}</span>`}${r.details ? `<small>${esc(r.details)}</small>` : ""}</td>
@@ -1130,7 +1130,7 @@ function renderTable() {
     <td>${esc(r.docType)}${r.docNo ? `<small>מס׳ ${esc(r.docNo)}</small>` : ""}</td>
     <td class="num">${r.vat ? fmt(r.vat) : ""}</td>
     <td class="num">${r.amount ? fmt(r.amount) : ""}${foreign(r) ? `<small title="${esc(fxNote(r))}">${FX[r.currency].sign}${fmt2(r.origAmount)}</small>` : ""}</td>
-    <td class="row-del">${tickBtn(r)}<button type="button" class="icon-del" data-del="${r.id}" title="מחיקת המסמך" aria-label="מחיקת המסמך">🗑️</button></td></tr>`).join("");
+    <td class="row-del"><button type="button" class="icon-del" data-del="${r.id}" title="מחיקת המסמך" aria-label="מחיקת המסמך">🗑️</button></td></tr>`).join("");
   syncSelection();
   showSide(shownIds.includes(current) ? current : null);
   if (docView === "gallery") renderGallery(rows);
@@ -1998,14 +1998,14 @@ function renderJournal() {
   // the VAT line of a licensed dealer's document has its fixed account, not one to pick
   const acc = (l, inner, cls) => (l.vatLine ? inner : pickable(l, inner, cls));
   $("jRows").innerHTML = lines.map((l) => `<tr data-id="${esc(l.r.id)}" class="${needsReview(l.r) ? "dup" : ""}${l.vatLine ? " vat-line" : ""}">
+      <td class="tick-cell">${l.vatLine ? "" : tickBtn(l.r)}</td>
       <td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.balance)}</td>
       <td>${needsReview(l.r) && !l.vatLine ? '<span title="מסמך לבדיקה">⚠️</span> ' : ""}${foreign(l.r) ? `<span class="tag fx" title="${esc(fxNote(l.r))}">${FX[l.r.currency].sign} ${esc(l.r.currency)}</span> ` : ""}${esc(l.details)}</td>
       <td class="num">${acc(l, esc(l.debit), "acc-code")}</td>
       <td class="num">${l.credit}</td>
       <td class="num">${l.amount.toLocaleString("he-IL", { maximumFractionDigits: 2 })}</td>
       <td class="num">${esc(l.ref)}</td>
-      <td>${acc(l, esc(accountName(l.debit)), "acc-name")}</td>
-      <td class="tick-cell">${l.vatLine ? "" : tickBtn(l.r)}</td></tr>`).join("");
+      <td>${acc(l, esc(accountName(l.debit)), "acc-name")}</td></tr>`).join("");
   $("jEmpty").hidden = lines.length > 0;
   document.querySelectorAll("#jHead [data-jsort]").forEach((th) => {
     th.querySelector(".arrow")?.remove();

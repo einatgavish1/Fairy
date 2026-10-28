@@ -231,7 +231,7 @@ button.link.danger-link { color: var(--neg); }
 .docs-split tbody tr { cursor: pointer; }
 .docs-split td { white-space: nowrap; }
 .docs-split td small { display: inline; margin-inline-start: 6px; }
-.docs-split td:nth-child(4) { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+.docs-split td:nth-child(4) { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
 .docs-split td:nth-child(6) { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 .side-empty { text-align: center; padding: 40px 10px; }
 .side-nav-btns { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
@@ -250,7 +250,7 @@ button.link.danger-link { color: var(--neg); }
 .side-actions .primary { flex: 1; }
 tr.current td { background: rgba(255, 211, 77, .2) !important; }
 tr.current td:first-child { box-shadow: inset -4px 0 0 var(--accent); }
-td.sel, th.sel { width: 34px; text-align: center; cursor: pointer; }
+td.sel, th.sel { width: 76px; text-align: center; cursor: pointer; }
 td.sel input, th.sel input { width: 16px; height: 16px; cursor: pointer; }
 tr.picked td { background: rgba(255, 255, 255, .12); }
 td.row-del { width: 40px; text-align: center; }
@@ -465,7 +465,8 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .tick:hover { border-color: #3fbf6f; color: rgba(63, 191, 111, .6); }
 .tick.on { border: 1.5px solid #2e9e5b; background: #2e9e5b; color: #fff; }
 .row-del { white-space: nowrap; }
-.row-del .tick { margin-inline-end: 6px; vertical-align: middle; }
+.sel-box { display: inline-flex; align-items: center; gap: 8px; }
+.sel-box > span { width: 28px; text-align: center; color: var(--muted); }
 .journal .tick-cell { text-align: center; }
 
 /* the documents as a gallery */

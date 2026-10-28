@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=31">
+<link rel="stylesheet" href="style.css?v=32">
 </head>
 <body>
 
@@ -153,7 +153,7 @@
       <div class="tablewrap">
         <table>
           <thead><tr>
-            <th class="sel"><input type="checkbox" id="selAll" title="סימון כל המוצגים" aria-label="סימון כל המוצגים"></th>
+            <th class="sel"><span class="sel-box"><input type="checkbox" id="selAll" title="סימון כל המוצגים" aria-label="סימון כל המוצגים"><span title="נבדק">✓</span></span></th>
             <th class="sort" data-sort="date">תאריך <span id="sortArrow">▼</span></th>
             <th>לקוח</th>
             <th>ספק</th>
@@ -161,7 +161,7 @@
             <th>מסמך</th>
             <th class="num">מע״מ</th>
             <th class="num">סכום</th>
-            <th title="נבדק · מחיקה">✓</th>
+            <th></th>
           </tr></thead>
           <tbody id="rows"></tbody>
           <tfoot><tr><td></td><td colspan="5">סה״כ מוצג</td><td class="num" id="shownVat"></td><td class="num" id="shownSum"></td><td></td></tr></tfoot>
@@ -226,6 +226,7 @@
       <table class="journal">
         <!-- a click on a heading sorts by that column; a second click turns the order around -->
         <thead><tr id="jHead">
+          <th class="sort tick-cell" data-jsort="checked" title="נבדק · מיון">✓</th>
           <th class="sort" data-jsort="date" title="מיון לפי תאריך"></th><th></th><th></th><th></th>
           <th class="sort" data-jsort="details">ספק / פרטים (מוגבל ל 24 תווים)</th>
           <th class="sort" data-jsort="debit">חובה</th>
@@ -233,10 +234,9 @@
           <th class="sort num" data-jsort="amount">סכום</th>
           <th class="sort" data-jsort="ref">אסמכתא</th>
           <th class="sort" data-jsort="accName">תאור חשבון חובה</th>
-          <th class="sort" data-jsort="checked" title="נבדק · מיון">✓</th>
         </tr></thead>
         <tbody id="jRows"></tbody>
-        <tfoot><tr><td colspan="7" id="jShown"></td><td class="num" id="jSum"></td><td colspan="3"></td></tr></tfoot>
+        <tfoot><tr><td colspan="8" id="jShown"></td><td class="num" id="jSum"></td><td colspan="2"></td></tr></tfoot>
       </table>
       <p class="empty" id="jEmpty" hidden>אין שורות שמתאימות לסינון.</p>
     </div>
@@ -396,6 +396,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=48"></script>
+<script type="module" src="app.js?v=49"></script>
 </body>
 </html>
