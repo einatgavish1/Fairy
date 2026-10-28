@@ -225,8 +225,7 @@ function renderClientPickers() {
 }
 
 // ---------- home page ----------
-// A greeting by the time of day, the office at a glance, and the way in: pick a client, or go
-// straight to taking in documents, the ones waiting for review, or everything.
+// A greeting by the time of day, and the way in: pick a client.
 
 function renderHome() {
   if ($("clientView").hidden) return;
@@ -236,27 +235,11 @@ function renderHome() {
   const HEBREW_NAMES = { "einatgavish1@gmail.com": "עינת" };
   const first = HEBREW_NAMES[user?.email] || (user?.displayName || "").split(" ")[0];
   $("homeHello").textContent = first ? `${hello}, ${first}` : hello;
-  const review = records.filter(needsReview).length;
-  const month = new Date().toISOString().slice(0, 7);
-  const thisMonth = records.filter((r) => (r.date || "").startsWith(month));
-  const stat = (n, label, cls = "") => `<div class="home-stat${cls}"><b>${n}</b><span>${label}</span></div>`;
-  $("homeStats").innerHTML = stat(clientNames().length, "לקוחות") + stat(records.length, "מסמכים")
-    + stat(review, "לבדיקה", review ? " warn" : "") + stat(fmt(round2(thisMonth.reduce((s, r) => s + (r.amount || 0), 0))), "החודש");
-  $("homeReviewCount").textContent = review || "";
-  $("homeReview").disabled = !review;
 }
 const homeGo = (view) => {
   chooseClient($("clientSelect").value);
   showView(view);
 };
-$("homeUpload").onclick = () => homeGo("upload");
-// The picked client's documents for review, or everyone's when that client has none.
-$("homeReview").onclick = () => {
-  const pick = $("clientSelect").value;
-  chooseClient(records.some((r) => (pick === ALL || r.client === pick) && needsReview(r)) ? pick : ALL);
-  showReview();
-};
-$("homeAll").onclick = () => $("allDocsBtn").click();
 $("homeBtn").onclick = showClients;
 $("homeLogout").onclick = () => $("logoutBtn").click();
 
