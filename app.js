@@ -1,8 +1,8 @@
 import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME } from "./extract.js?v=10";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview } from "./extract.js?v=12";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
 import { EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=5";
-import { fillFromPath } from "./recheck.js?v=1";
+import { fillFromPath } from "./recheck.js?v=3";
 import { parseComparative, comparativeFromDocs, buildFiling, filingSheet, comparativeSheet, lineOf } from "./report.js?v=1";
 
 const $ = (id) => document.getElementById(id);
@@ -49,6 +49,7 @@ if (CLOUD) {
       await fs.deleteDoc(fs.doc(db, "docs", id));
     },
     async preview(id) { return (await fs.getDoc(fs.doc(db, "previews", id))).data()?.dataUrl || ""; },
+    savePreview: (id, dataUrl) => fs.setDoc(fs.doc(db, "previews", id), { dataUrl }),
     async allowed(email) {
       if (OWNER_EMAILS.includes(email)) return true;
       try { return (await fs.getDoc(fs.doc(db, "access", email.toLowerCase()))).exists(); } catch { return false; }
@@ -82,6 +83,7 @@ if (CLOUD) {
     async update(id, rec) { write(readJson(KEY).map((r) => (r.id === id ? { ...r, ...rec } : r))); },
     async remove(id) { localStorage.removeItem(PKEY + id); write(readJson(KEY).filter((r) => r.id !== id)); },
     async preview(id) { return localStorage.getItem(PKEY + id) || ""; },
+    async savePreview(id, dataUrl) { localStorage.setItem(PKEY + id, dataUrl); },
     watchClients(cb) { const f = () => cb(readJson(CKEY)); clientListeners.add(f); f(); return () => clientListeners.delete(f); },
     async addClient(name) {
       localStorage.setItem(CKEY, JSON.stringify([...readJson(CKEY), { id: Date.now().toString(36), name }]));
@@ -883,6 +885,7 @@ function renderAll() {
   if (years.includes(curYear)) $("sumYear").value = curYear;
   const review = records.filter((r) => inScope(r) && needsReview(r)).length;
   $("reviewNote").hidden = !review;
+  if (!rereading) $("rereadAll").hidden = !review;
   $("reviewCount").textContent = review;
   $("reviewBadge").hidden = !review;
   $("reviewBadge").textContent = review;
@@ -1058,6 +1061,7 @@ const step = (d) => { const i = shownIds.indexOf(current) + d; if (shownIds[i]) 
 $("sidePrev").onclick = () => step(-1);
 $("sideNext").onclick = () => step(1);
 $("sideEdit").onclick = () => current && openEntry(current);
+$("sideRotate").onclick = async () => { if (current) turnPicture(current, await previewOf(current)); };
 $("sideDelete").onclick = () => current && deleteDocs([current]);
 // ↑ ↓ move through the list, Enter opens the document for editing.
 document.addEventListener("keydown", (e) => {
@@ -1086,13 +1090,105 @@ async function openEntry(id, fallback) {
   $("dlgFileName").textContent = r.fileName || "";
   $("dlgPreview").innerHTML = '<p class="soon">טוען תמונה…</p>';
   $("entryDlg").showModal();
-  const src = await store.preview(id);
+  const src = await previewOf(id);
   if (editing !== id) return;
-  $("dlgPreview").innerHTML = src
-    ? `<img src="${src}" alt=""><small class="soon">לחיצה על התמונה מגדילה אותה</small>`
-    : `<p class="soon">אין תמונה של המסמך. פתחו את הקובץ המקורי:<br><b class="ltr-path">${esc(r.fileName)}</b></p>`;
-  const img = $("dlgPreview").querySelector("img");
-  if (img) img.onclick = () => zoom(src);
+  dialogPicture(id, src, r);
+}
+
+// The document's picture in the dialog, with turning it and reading it again.
+function dialogPicture(id, src, r) {
+  if (!src) {
+    $("dlgPreview").innerHTML = `<p class="soon">אין תמונה של המסמך. פתחו את הקובץ המקורי:<br><b class="ltr-path">${esc(r.fileName)}</b></p>`;
+    return;
+  }
+  $("dlgPreview").innerHTML = `<img src="${src}" alt="">
+    <div class="pic-tools">
+      <button type="button" class="ghost" id="dlgRotate" title="סיבוב רבע סיבוב עם כיוון השעון">↻ סיבוב</button>
+      <button type="button" class="ghost" id="dlgReread" title="קריאת הפרטים מהתמונה, כפי שהיא מוצגת עכשיו">📖 קריאה מחדש</button>
+    </div>
+    <small class="soon">מסמך עקום? מסובבים עד שהוא ישר, ואז "קריאה מחדש". לחיצה על התמונה מגדילה אותה.</small>`;
+  $("dlgPreview").querySelector("img").onclick = () => zoom(src);
+  $("dlgRotate").onclick = async () => {
+    const turned = await turnPicture(id, src);
+    if (turned && editing === id) dialogPicture(id, turned, r);
+  };
+  $("dlgReread").onclick = async () => {
+    const btn = $("dlgReread");
+    btn.disabled = true;
+    try {
+      const res = await rereadPreview(src, 0, (p) => (btn.textContent = `📖 קורא… ${Math.round(p * 100)}%`));
+      const found = parseText(res.text, "", res.alt);
+      // What the new reading found replaces what was read before; the client and the account stay.
+      let n = 0;
+      for (const k of ["date", "supplier", "supplierId", "customer", "category", "docType", "docNo", "amount", "vat", "details"]) {
+        const input = $("dlgFields").querySelector(`[name=${k}]`);
+        if (!input || found[k] === "" || found[k] == null) continue;
+        input.value = found[k];
+        n++;
+      }
+      $("dlgFields").dispatchEvent(new Event("input"));
+      toast(n ? `נקראו ${n} פרטים מהתמונה. בדקו אותם ושמרו.` : "גם בכיוון הזה לא נקראו פרטים. נסו לסובב את התמונה.");
+    } catch (e) { toast("הקריאה נכשלה: " + e.message); }
+    btn.disabled = false;
+    btn.textContent = "📖 קריאה מחדש";
+  };
+}
+
+// Reads every document still waiting for review again from its saved picture: a picture taken on its
+// side is turned upright first, and whatever the new reading finds fills what the record is missing.
+// The documents that come out complete are no longer for review.
+let rereading = false;
+$("rereadAll").onclick = async () => {
+  const list = records.filter((r) => inScope(r) && (r.status === "review" || r.status === "failed"));
+  if (!list.length || rereading) return;
+  if (!confirm(`לקרוא שוב ${list.length} מסמכים מהתמונות השמורות שלהם? זה לוקח כמה שניות לכל מסמך, ואפשר להמשיך לעבוד בינתיים.`)) return;
+  rereading = true;
+  const btn = $("rereadAll");
+  btn.disabled = true;
+  const KEYS = ["date", "supplier", "supplierId", "customer", "category", "docType", "docNo", "amount", "vat", "details"];
+  const empty = (v) => v === "" || v == null;
+  let done = 0, fixed = 0, turned = 0;
+  for (const r of list) {
+    btn.textContent = `📖 קורא מסמך ${done + 1} מתוך ${list.length}…`;
+    try {
+      const src = await previewOf(r.id);
+      if (src) {
+        const res = await rereadPreview(src, null);
+        const found = parseText(res.text, "", res.alt);
+        const upd = { ...r };
+        for (const k of KEYS) if (empty(upd[k]) && !empty(found[k])) upd[k] = found[k];
+        if (!upd.text) upd.text = [res.text, res.alt].filter(Boolean).join("\n----\n").slice(0, 15000);
+        fillFromPath(upd, `${res.text}\n${res.alt}`);
+        const why = reviewReasons(upd, { exceptId: r.id });
+        upd.status = why.length ? "review" : "ok";
+        upd.reviewWhy = why.join(" · ");
+        const changes = Object.fromEntries(Object.keys(upd).filter((k) => k !== "id" && upd[k] !== r[k]).map((k) => [k, upd[k]]));
+        if (res.turned) {
+          await store.savePreview(r.id, res.preview);
+          previewCache.set(r.id, Promise.resolve(res.preview));
+          turned++;
+        }
+        if (Object.keys(changes).length) await store.update(r.id, changes);
+        if (upd.status === "ok") fixed++;
+      }
+    } catch { /* this one stays as it was; carry on with the rest */ }
+    done++;
+  }
+  rereading = false;
+  btn.disabled = false;
+  btn.textContent = "📖 קריאה חוזרת של המסמכים לבדיקה (כולל סיבוב)";
+  toast(`נקראו שוב ${done} מסמכים${turned ? `, ${turned} סובבו` : ""}. ${fixed} מהם תקינים עכשיו.`);
+};
+
+// Turns a document's saved picture a quarter turn clockwise and keeps it that way.
+async function turnPicture(id, src) {
+  try {
+    const turned = await rotatePreview(src, 90);
+    await store.savePreview(id, turned);
+    previewCache.set(id, Promise.resolve(turned));
+    if (current === id) showSide(id);
+    return turned;
+  } catch (e) { toast("הסיבוב נכשל: " + e.message); return ""; }
 }
 
 // "שמירה" keeps whatever is still wrong marked for review; "שמירה ואישור" says the person checked it.

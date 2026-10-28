@@ -370,3 +370,8 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .filing-sheet tr.total td:nth-child(3) { border-top: 1px solid #111; border-bottom: 3px double #111; }
 .filing-sheet tbody tr:hover { background: none; }
 .comp-box { margin-top: 10px; }
+
+/* turning a document's picture and reading it again */
+.pic-tools { display: flex; gap: 8px; margin: 8px 0 4px; }
+.pic-tools button { flex: 1; padding: 6px 8px; font-size: 14px; }
+.reread-all { margin: -2px 0 10px; }

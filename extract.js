@@ -213,11 +213,68 @@ async function readImage(file, onProgress) {
   onProgress(0.02, "טוען את התמונה…");
   const img = await loadImage(file);
   // Photos from a phone are big; ~2400px on the long side is plenty for reading.
-  const canvas = drawScaled(img, 2400, true);
-  const preview = toPreview(canvas);
+  return readPicture(drawScaled(img, 2400, true), onProgress, null);
+}
+
+// Reads a picture of a document. turn: degrees to turn it first (clockwise), or null to find the way
+// up by itself (see uprightTurn). -> { text, alt, preview (the picture as read, upright), ocr }
+async function readPicture(canvas, onProgress, turn = null) {
   onProgress(0.05, "מכין את זיהוי הטקסט (בפעם הראשונה זה לוקח רגע)…");
-  const text = await ocr(canvas, (x) => onProgress(0.05 + 0.75 * x, "מזהה טקסט…"));
-  return { text, alt: await secondReading(canvas, text, onProgress), preview, ocr: true };
+  const deg = turn ?? await uprightTurn(canvas, onProgress);
+  if (deg) canvas = rotate(canvas, deg);
+  const text = await ocr(canvas, (x) => onProgress(0.3 + 0.5 * x, "מזהה טקסט…"));
+  return { text, alt: await secondReading(canvas, text, onProgress), preview: toPreview(canvas), ocr: true, turned: deg };
+}
+
+// A receipt photographed lying on its side is wider than it is tall, and read that way its lines come
+// out as noise. Such a picture is read small at a quarter turn each way too, and kept the way its text
+// came out clearest. An upright (portrait) picture is taken as it is.
+async function uprightTurn(canvas, onProgress) {
+  if (canvas.width <= canvas.height * 1.15) return 0;
+  const probe = drawScaled(canvas, 1400);
+  let best = { deg: 0, score: -1 };
+  for (const [i, deg] of [0, 90, 270].entries()) {
+    const text = await ocr(rotate(probe, deg), (x) => onProgress(0.05 + 0.25 * ((i + x) / 3), "בודק באיזה כיוון המסמך…"));
+    const score = clarity(text);
+    if (score > best.score) best = { deg, score };
+  }
+  return best.deg;
+}
+
+// The picture turned by 90, 180 or 270 degrees clockwise.
+export function rotate(src, deg) {
+  deg = ((deg % 360) + 360) % 360;
+  if (!deg) return src;
+  const c = document.createElement("canvas");
+  const side = deg === 90 || deg === 270;
+  c.width = side ? src.height : src.width;
+  c.height = side ? src.width : src.height;
+  const x = c.getContext("2d");
+  x.translate(c.width / 2, c.height / 2);
+  x.rotate((deg * Math.PI) / 180);
+  x.drawImage(src, -src.width / 2, -src.height / 2);
+  return c;
+}
+
+// The saved picture of a document (a data URL) turned clockwise, as a new data URL.
+export async function rotatePreview(dataUrl, deg) {
+  const img = await loadImage(dataUrl);
+  return toPreview(rotate(drawScaled(img, 2000), deg));
+}
+
+// Reads a saved picture again: turned by deg, or turned the right way up by itself when deg is null.
+export async function rereadPreview(dataUrl, deg = null, onProgress = () => {}) {
+  const img = await loadImage(dataUrl);
+  // The saved picture is small; enlarging it a little gives the reading more to work with.
+  const k = Math.max(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
+  const c = document.createElement("canvas");
+  c.width = Math.round(img.naturalWidth * k);
+  c.height = Math.round(img.naturalHeight * k);
+  const x = c.getContext("2d");
+  x.imageSmoothingQuality = "high";
+  x.filter = "grayscale(1) contrast(1.25)";
+  x.drawImage(img, 0, 0, c.width, c.height);
+  return readPicture(c, onProgress, deg);
 }
 
 // When the first reading of a picture misses the date, the amount or the supplier, the picture is read
@@ -260,12 +317,14 @@ function binarize(src) {
   return c;
 }
 
+// A File, or a picture already in memory as a data URL.
 function loadImage(file) {
   return new Promise((ok, bad) => {
-    const url = URL.createObjectURL(file);
+    const own = typeof file !== "string";
+    const url = own ? URL.createObjectURL(file) : file;
     const img = new Image();
-    img.onload = () => { URL.revokeObjectURL(url); ok(img); };
-    img.onerror = () => { URL.revokeObjectURL(url); bad(new Error("הקובץ לא נפתח כתמונה (ייתכן שהוא פגום)")); };
+    img.onload = () => { if (own) URL.revokeObjectURL(url); ok(img); };
+    img.onerror = () => { if (own) URL.revokeObjectURL(url); bad(new Error("הקובץ לא נפתח כתמונה (ייתכן שהוא פגום)")); };
     img.src = url;
   });
 }
@@ -284,9 +343,10 @@ function drawScaled(src, maxSide, gray = false) {
   return canvas;
 }
 
-// A small JPEG to keep next to the record (Firestore documents are limited to 1MB).
+// A JPEG to keep next to the record (Firestore documents are limited to 1MB). It is kept large enough
+// to be read again later (a receipt photographed on its side has small print), smaller only when it must.
 function toPreview(canvas) {
-  for (const [side, q] of [[1000, 0.7], [850, 0.55], [700, 0.45]]) {
+  for (const [side, q] of [[1800, 0.72], [1500, 0.62], [1200, 0.55], [1000, 0.5], [800, 0.45]]) {
     const url = drawScaled(canvas, side).toDataURL("image/jpeg", q);
     if (url.length < 600000) return url;
   }
@@ -348,7 +408,7 @@ export const CATEGORIES = [
   ["ארנונה", /ארנונה|עיריית|עירית|מועצה\s*(?:מקומית|אזורית)/],
   ["גז", /אמישראגז|סופרגז|פזגז|גז\s*ביתי|צריכת\s*גז/],
   ["תקשורת", /בזק|פרטנר|סלקום|הוט\s*(?:מובייל|טלקום|נט)|HOT|גולן\s*טלקום|אינטרנט|סלולר|טלפוניה|תקשורת|קווי|yes\s/i],
-  ["רכב ודלק", /תחנת\s*דלק|סונול|דור\s*אלון|(?:^|\s)פז(?:\s|$)|פז\s*קמעונאות|yellow|דלק\s*(?:חברת|מוטורס|קמעונאות)|אלון\s*רבוע|אוקטן|ליטרים|\bTEN\b|תדלוק|בנזין|סולר|מוסך|צמיגים|ליסינג|כביש\s*6|טסט\s*לרכב/i],
+  ["רכב ודלק", /תחנת\s*דלק|סונול|דור\s*אלון|(?:^|\s)פז(?:\s|$)|פז\s*קמעונאות|yellow|דלק\s*(?:חברת|מוטורס|קמעונאות)|אלון\s*רבוע|אוקטן|ליטרים|דלק\s*טן|טן\s*דלק|תדלוק|בנזין|סולר|מוסך|צמיגים|ליסינג|כביש\s*6|טסט\s*לרכב/i],
   ["חניה ותחבורה", /חניה|חנייה|חניון|פנגו|סלופארק|רב[\s-]?קו|רכבת\s*ישראל|מונית|מוניות|טאקסי|טקסי|נסיעה\s*מס|gett|uber|yango|יאנגו|דן\s*בדרום|אגד|מטרופולין|אפיקים|moovit|מוביט/i],
   ["ביטוח", /ביטוח|insurance/i],
   ["שכירות", /שכירות|שכ["״]ד|שכר\s*דירה|\brent\b/i],
@@ -493,7 +553,7 @@ function findDocNo(text) {
 }
 
 const NOT_A_NAME = /חשבונית|קבלה|מקור|העתק|נאמן\s*למקור|תאריך|לכבוד|עמוד|דף\s*\d|page|invoice|receipt|copy|original|טלפון|טל['׳.:]|פקס|fax|tel|www\.|@|כתובת|רחוב|רח['׳]|ת\.?ד|מיקוד|לקוח|customer|bill\s*to/i;
-const cleanName = (s) => s.replace(ID_RE, "").replace(/(\S)(בע["״']?מ)/, "$1 $2").replace(/[|_*•·]+/g, " ").replace(/\s+/g, " ").replace(/^[\s\-:.,]+|[\s\-:.,]+$/g, "").slice(0, 60);
+const cleanName = (s) => s.replace(ID_RE, "").replace(/(\S)(בע["״']?מ)/, "$1 $2").replace(/[|_*•·]+/g, " ").replace(/\s+/g, " ").replace(/^[\s\-:.,=+~"'״*]+|[\s\-:.,=+~*]+$/g, "").slice(0, 60);
 
 // The customer the document was made out to: for an accountant, her client. The name after "לכבוד"
 // comes first; only without one do "שם הלקוח", "Bill to" and the like count.
