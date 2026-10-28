@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=21">
+<link rel="stylesheet" href="style.css?v=22">
 </head>
 <body>
 
@@ -41,6 +41,8 @@
 
       <form id="clientForm" class="cv-choose">
         <label for="clientSelect">עם איזה לקוח עובדים?</label>
+        <input type="search" id="clientSearch" class="client-search" list="clientNameList" placeholder="🔎 חיפוש לקוח לפי שם…" autocomplete="off">
+        <datalist id="clientNameList"></datalist>
         <div class="row">
           <select id="clientSelect" class="client-select"></select>
           <button class="primary">כניסה ←</button>
@@ -273,6 +275,23 @@
   </form>
 </dialog>
 
+<!-- Two documents that look the same, on the whole screen: one on each side, their details between them. -->
+<dialog id="dupDlg" class="dup-dlg">
+  <div class="dup-head">
+    <h2>⚖️ השוואת מסמכים כפולים</h2>
+    <p class="dup-warn" id="dupWhy"></p>
+    <select id="dupOther" hidden title="מסמך דומה נוסף"></select>
+    <span class="grow"></span>
+    <button type="button" class="ghost" id="dupKeepBoth" title="שני המסמכים שונים: שניהם נשארים והסימון יורד">✓ לא כפילות, להשאיר את שניהם</button>
+    <button type="button" class="ghost" id="dupClose">✕ סגירה</button>
+  </div>
+  <div class="dup-grid">
+    <section class="dup-doc" id="dupA"></section>
+    <section class="dup-data" id="dupData"></section>
+    <section class="dup-doc" id="dupB"></section>
+  </div>
+</dialog>
+
 <dialog id="shareDlg">
   <form method="dialog">
     <h2>שיתוף</h2>
@@ -291,6 +310,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=28"></script>
+<script type="module" src="app.js?v=29"></script>
 </body>
 </html>

@@ -219,6 +219,8 @@ function renderClientPickers() {
   // On the home page a choice already made in the dropdown stays when the data refreshes.
   const pick = $("clientSelect").value && !$("clientView").hidden ? $("clientSelect").value : (client ?? (lastClient() || ALL));
   $("clientSelect").innerHTML = clientOptions(pick);
+  $("clientNameList").innerHTML = clientNames().map((n) => `<option value="${esc(n)}">`).join("");
+  if ($("clientSearch").value.trim()) searchClients();
   renderHome();
   if (client !== null) $("navClient").innerHTML = clientOptions(client);
   // Upload with "all clients": each document goes to the client named on it, or to one picked here.
@@ -245,8 +247,30 @@ const homeGo = (view) => {
 $("homeBtn").onclick = showClients;
 $("homeLogout").onclick = () => $("logoutBtn").click();
 
+// Typing part of a name leaves only the matching clients in the list and picks the first of them;
+// a name picked from the suggestions is chosen as is.
+function searchClients() {
+  const q = $("clientSearch").value.trim().toLowerCase(), sel = $("clientSelect");
+  let first = null, exact = null;
+  for (const o of sel.options) {
+    const match = !q || (o.value !== ALL && o.text.toLowerCase().includes(q));
+    o.hidden = !match;
+    if (match && !first) first = o;
+    if (q && o.text.toLowerCase() === q) exact = o;
+  }
+  const pick = exact || first;
+  if (q && pick) sel.value = pick.value;
+  $("clientSearch").classList.toggle("no-match", !!q && !first);
+}
+$("clientSearch").addEventListener("input", searchClients);
+
 // "כניסה" opens the client's journal entries.
-$("clientForm").onsubmit = (e) => { e.preventDefault(); homeGo("journal"); };
+$("clientForm").onsubmit = (e) => {
+  e.preventDefault();
+  if ($("clientSearch").classList.contains("no-match")) { toast("לא נמצא לקוח בשם הזה"); return; }
+  $("clientSearch").value = "";
+  homeGo("journal");
+};
 $("navClient").onchange = () => chooseClient($("navClient").value);
 
 async function addClient(name) {
@@ -389,6 +413,8 @@ const sameName = (a, b) => {
 const sameSupplier = (a, b) => (a.supplierId && a.supplierId === b.supplierId) || sameName(a.supplier, b.supplier);
 // Why two records look like the same document ("" when they don't).
 function dupReason(a, b) {
+  // Two documents someone compared and said are not the same.
+  if ((a.notDup || []).includes(b.id) || (b.notDup || []).includes(a.id)) return "";
   if (a.fileHash && a.fileHash === b.fileHash) return "אותו קובץ בדיוק";
   if (a.docNo && a.docNo === b.docNo && sameSupplier(a, b)) return "אותו ספק ואותו מספר מסמך";
   if (a.amount && a.amount === b.amount && a.date && a.date === b.date && sameSupplier(a, b)) return "אותו ספק, תאריך וסכום";
@@ -398,8 +424,8 @@ const describe = (x) => [x.client, x.supplier, showDate(x.date), x.amount ? fmt(
 
 // Saved this session but maybe not yet back from the database, so a copy right behind it is still caught.
 const savedNow = [];
-function findDuplicate(r, exceptId) {
-  const seen = new Set();
+function findDuplicate(r, exceptId, skip = []) {
+  const seen = new Set(skip);
   for (const x of [...records, ...savedNow]) {
     if (x.id === exceptId || seen.has(x.id)) continue;
     seen.add(x.id);
@@ -443,7 +469,7 @@ async function spreadCategory(rec, fromId) {
   return others.length;
 }
 
-function reviewReasons(r, { exceptId, noText = false, failed = "" } = {}) {
+function reviewReasons(r, { exceptId, noText = false, failed = "", skip = [] } = {}) {
   const why = [];
   if (failed) why.push(`הקובץ לא נקרא (${failed})`);
   else if (noText) why.push("לא נמצא טקסט במסמך");
@@ -451,7 +477,7 @@ function reviewReasons(r, { exceptId, noText = false, failed = "" } = {}) {
   if (missing.length && !failed) why.push(`חסר: ${missing.join(", ")}`);
   // A document uploaded under a client is theirs even when made out to someone else (a spouse, say).
   if (!r.client) why.push(r.customer ? `הלקוח "${r.customer}" שבמסמך לא נמצא ברשימת הלקוחות` : "לא שויך ללקוח");
-  const dup = findDuplicate(r, exceptId);
+  const dup = findDuplicate(r, exceptId, skip);
   if (dup) why.push(`ייתכן כפילות (${dup.why}) של: ${dup.what}`);
   return why;
 }
@@ -896,15 +922,20 @@ function renderAll() {
 }
 
 // id -> why it looks like another saved record. Recomputed whenever the records change.
-let dupOf = new Map();
+// dupWith: id -> the ids of the records it looks like.
+let dupOf = new Map(), dupWith = new Map();
 function markDuplicates() {
   dupOf = new Map();
+  dupWith = new Map();
+  const pair = (a, b) => dupWith.set(a, [...(dupWith.get(a) || []), b]);
   for (let i = 0; i < records.length; i++)
     for (let j = i + 1; j < records.length; j++) {
       const why = dupReason(records[i], records[j]);
       if (!why) continue;
       dupOf.set(records[i].id, `${why}, כמו: ${describe(records[j])}`);
       dupOf.set(records[j].id, `${why}, כמו: ${describe(records[i])}`);
+      pair(records[i].id, records[j].id);
+      pair(records[j].id, records[i].id);
     }
 }
 
@@ -1076,7 +1107,9 @@ document.addEventListener("keydown", (e) => {
 // ---------- one document: see it, fix it, approve it ----------
 
 let editing = null;
-async function openEntry(id, fallback) {
+// A document that looks like another one opens beside it, to decide which to keep.
+async function openEntry(id, fallback, plain = false) {
+  if (!plain && dupWith.has(id)) { openCompare(id); return; }
   const r = records.find((x) => x.id === id) || (fallback && { ...fallback, id });
   if (!r) return;
   editing = id;
@@ -1276,6 +1309,144 @@ $("entryForm").onsubmit = (e) => { e.preventDefault(); saveEntry(false); };
 $("approveBtn").onclick = () => saveEntry(true);
 $("cancelBtn").onclick = () => $("entryDlg").close();
 $("delBtn").onclick = async () => { if (await deleteDocs([editing])) $("entryDlg").close(); };
+
+// ---------- two documents that look the same, side by side ----------
+// The whole screen: one document on each side and their details between them, the differences marked.
+// From here one of them is deleted, or opened for editing, or shown in the list, or both are kept.
+
+let comparing = null; // [id on the right, id on the left]
+const uploadedAt = (r) => {
+  const t = r.createdAt?.toDate ? r.createdAt.toDate() : r.createdAt ? new Date(r.createdAt) : null;
+  return t && !isNaN(t) ? t.toLocaleString("he-IL", { dateStyle: "short", timeStyle: "short" }) : "";
+};
+
+function openCompare(id, otherId) {
+  const others = dupWith.get(id) || [];
+  if (!others.length) { openEntry(id, null, true); return; }
+  const other = others.includes(otherId) ? otherId : others[0];
+  comparing = [id, other];
+  $("dupOther").hidden = others.length < 2;
+  $("dupOther").innerHTML = others.map((o, i) => {
+    const x = records.find((r) => r.id === o) || {};
+    return `<option value="${esc(o)}"${o === other ? " selected" : ""}>מול מסמך ${i + 1}: ${esc(describe(x))}</option>`;
+  }).join("");
+  const a = records.find((r) => r.id === id), b = records.find((r) => r.id === other);
+  $("dupWhy").textContent = `⚠️ ${dupReason(a, b) || "ייתכן כפילות"}. השוו את שני המסמכים והחליטו איזה מהם להשאיר.`;
+  $("dupData").innerHTML = compareTable(a, b);
+  compareSide($("dupA"), a, "המסמך הזה");
+  compareSide($("dupB"), b, "המסמך הדומה");
+  if (!$("dupDlg").open) $("dupDlg").showModal();
+}
+
+function compareTable(a, b) {
+  const rows = [
+    ["לקוח", (r) => r.client], ["שם במסמך", (r) => r.customer], ["תאריך", (r) => showDate(r.date)],
+    ["ספק", (r) => r.supplier], ["ח.פ / ע.מ", (r) => r.supplierId], ["סוג שירות", (r) => r.category],
+    ["סוג מסמך", (r) => r.docType], ["מספר מסמך", (r) => r.docNo], ["סכום", (r) => (r.amount ? fmt(r.amount) : "")],
+    ["מע״מ", (r) => (r.vat ? fmt(r.vat) : "")], ["חשבון חובה", (r) => { const c = accountOf(r); return c ? `${c} · ${accountName(c)}` : ""; }],
+    ["פירוט", (r) => r.details], ["מצב", (r) => (r.status === "ok" ? "✅ אושר" : r.status === "failed" ? "❌ לא נקרא" : "⚠️ לבדיקה")],
+    ["הועלה", uploadedAt], ["קובץ", (r) => (r.fileName || "").split("/").pop()],
+  ];
+  return `<table class="dup-table"><thead><tr><th></th><th>המסמך הזה</th><th>המסמך הדומה</th></tr></thead><tbody>${rows.map(([label, get]) => {
+    const x = String(get(a) ?? ""), y = String(get(b) ?? "");
+    return `<tr class="${x === y ? "same" : "diff"}"><th>${label}</th><td>${esc(x) || "—"}</td><td>${esc(y) || "—"}</td></tr>`;
+  }).join("")}</tbody></table>
+  <p class="soon">שורה מודגשת: הפרטים שונים בין שני המסמכים.</p>`;
+}
+
+async function compareSide(box, r, title) {
+  box.dataset.id = r.id;
+  box.innerHTML = `<div class="dup-doc-head"><b>${title}</b>
+      <span class="pic-zoom"><button type="button" class="ghost" data-zoom="out" title="הקטנה">−</button><button type="button" class="ghost" data-zoom="in" title="הגדלה">+</button><button type="button" class="ghost" data-zoom="fit" title="התאמה">↔</button></span></div>
+    <div class="pic-frame"><p class="soon">טוען את המסמך…</p></div>
+    <div class="dup-path"><span class="soon">מיקום:</span> <span class="ltr-path">${esc(r.fileName) || "—"}</span></div>
+    <div class="dup-acts">
+      <button type="button" class="ghost" data-act="copy" title="העתקת מיקום הקובץ המקורי, להדבקה בסייר הקבצים">📋 העתקת המיקום</button>
+      <button type="button" class="ghost" data-act="list" title="סגירת החלון ומעבר למסמך ברשימת המסמכים">📍 הצגה ברשימה</button>
+      <button type="button" class="ghost" data-act="edit">✏️ עריכה</button>
+      <button type="button" class="danger" data-act="del">🗑️ מחיקת המסמך הזה</button>
+    </div>`;
+  const src = await previewOf(r.id);
+  if (box.dataset.id !== r.id) return;
+  const frame = box.querySelector(".pic-frame");
+  frame.innerHTML = src ? `<img src="${src}" alt="" draggable="false">`
+    : `<p class="soon">אין תמונה של המסמך${/›/.test(r.fileName) ? " (שורה מקובץ אקסל)" : ""}.</p>`;
+  const img = frame.querySelector("img");
+  if (!img) return;
+  let k = 1;
+  const apply = () => { img.style.width = `${k * 100}%`; };
+  box.querySelector(".pic-zoom").onclick = (e) => {
+    const what = e.target.closest("[data-zoom]")?.dataset.zoom;
+    if (what === "in") k = Math.min(6, k * 1.25);
+    else if (what === "out") k = Math.max(0.3, k * 0.8);
+    else if (what === "fit") { k = 1; frame.scrollTo(0, 0); }
+    apply();
+  };
+  frame.onwheel = (e) => { if (!e.ctrlKey) return; e.preventDefault(); k = Math.min(6, Math.max(0.3, k * (e.deltaY < 0 ? 1.15 : 0.87))); apply(); };
+  frame.onpointerdown = (e) => {
+    const sx = e.clientX, sy = e.clientY, left = frame.scrollLeft, top = frame.scrollTop;
+    frame.setPointerCapture(e.pointerId);
+    frame.onpointermove = (m) => { frame.scrollLeft = left - (m.clientX - sx); frame.scrollTop = top - (m.clientY - sy); };
+    frame.onpointerup = () => { frame.onpointermove = null; };
+  };
+}
+
+// The other document is checked again once this one is gone or was said to be different: a document
+// waiting for review only because of the duplicate stops waiting.
+async function recheckAfterDup(r, skip = [], extra = {}) {
+  const upd = { ...r, ...extra };
+  const changes = { ...extra };
+  if (r.status === "review") {
+    const why = reviewReasons(upd, { exceptId: r.id, skip, noText: (r.reviewWhy || "").includes("לא נמצא טקסט") });
+    changes.status = why.length ? "review" : "ok";
+    changes.reviewWhy = why.join(" · ");
+  }
+  if (Object.keys(changes).length) await store.update(r.id, changes);
+}
+
+$("dupDlg").addEventListener("click", async (e) => {
+  const act = e.target.closest("[data-act]")?.dataset.act;
+  if (!act || !comparing) return;
+  const id = e.target.closest("[data-id]").dataset.id;
+  const r = records.find((x) => x.id === id);
+  const otherId = comparing.find((x) => x !== id);
+  if (!r) return;
+  if (act === "copy") {
+    try { await navigator.clipboard.writeText(r.fileName || ""); toast("המיקום הועתק. הדביקו אותו בחיפוש של סייר הקבצים."); }
+    catch { prompt("מיקום הקובץ:", r.fileName || ""); }
+  } else if (act === "list") {
+    $("dupDlg").close();
+    showView("docs");
+    $("search").value = "";
+    $("reviewOnly").checked = false;
+    for (const f of ["catFilter", "typeFilter", "monthFilter"]) $(f).value = "";
+    renderTable();
+    if (shownIds.includes(id)) showSide(id);
+    else toast("המסמך לא מוצג ברשימה (ייתכן שהוא של לקוח אחר)");
+  } else if (act === "edit") {
+    $("dupDlg").close();
+    openEntry(id, null, true);
+  } else if (act === "del") {
+    if (!(await deleteDocs([id]))) return;
+    const other = records.find((x) => x.id === otherId);
+    if (other) { try { await recheckAfterDup(other, [id]); } catch { /* it stays marked; the list still shows it */ } }
+    $("dupDlg").close();
+  }
+});
+$("dupOther").oninput = () => comparing && openCompare(comparing[0], $("dupOther").value);
+$("dupClose").onclick = () => $("dupDlg").close();
+$("dupDlg").addEventListener("close", () => { comparing = null; });
+$("dupKeepBoth").onclick = async () => {
+  if (!comparing) return;
+  const [a, b] = comparing.map((id) => records.find((x) => x.id === id));
+  if (!a || !b) return;
+  try {
+    await recheckAfterDup(a, [], { notDup: [...new Set([...(a.notDup || []), b.id])] });
+    await recheckAfterDup(b, [], { notDup: [...new Set([...(b.notDup || []), a.id])] });
+    $("dupDlg").close();
+    toast("סומן: שני מסמכים שונים. שניהם נשארים.");
+  } catch (err) { toast("השמירה נכשלה: " + err.message); }
+};
 
 $("exportBtn").onclick = () => {
   const rows = filtered().map((r) => ({
