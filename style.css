@@ -530,3 +530,8 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .misc-card .m-move { padding: 3px 8px; font-size: 13px; }
 body.dragging-misc #sideNav > button[data-view="docs"], body.dragging-misc #sideNav > button[data-view="journal"] { outline: 2px dashed var(--accent); }
 #sideNav > button.drop-here { background: var(--accent); color: #1b2a4a; }
+
+/* number fields without the up/down arrows; only the percentage keeps them */
+input[type="number"]:not([name="pct"]) { -moz-appearance: textfield; appearance: textfield; }
+input[type="number"]:not([name="pct"])::-webkit-inner-spin-button,
+input[type="number"]:not([name="pct"])::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
