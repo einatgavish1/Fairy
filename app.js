@@ -1,8 +1,8 @@
 import { firebaseConfig, OWNER_EMAILS, AI_READING } from "./firebase-config.js?v=2";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview } from "./extract.js?v=14";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview } from "./extract.js?v=15";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
 import { EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=6";
-import { fillFromPath } from "./recheck.js?v=5";
+import { fillFromPath } from "./recheck.js?v=6";
 import { parseComparative, comparativeFromDocs, buildFiling, filingSheet, comparativeSheet, lineOf } from "./report.js?v=3";
 
 const $ = (id) => document.getElementById(id);
@@ -386,6 +386,61 @@ function showView(name) {
 }
 document.querySelectorAll("#sideNav > button[data-view]").forEach((b) => (b.onclick = () => showView(b.dataset.view)));
 
+// ---------- payments in a foreign currency ----------
+// A document paid in dollars, euros or pounds is recorded in shekels at the Bank of Israel representative
+// rate (שער יציג) of the payment day: the last rate published on or before it (none on weekends and
+// holidays). The amount as paid, the rate and its day stay on the document, and a note shows them.
+const FX = {
+  "": { name: "₪ שקל", sign: "₪" },
+  USD: { name: "$ דולר ארה״ב", sign: "$" },
+  EUR: { name: "€ אירו", sign: "€" },
+  GBP: { name: "£ לירה שטרלינג", sign: "£" },
+};
+const FX_CODES = Object.keys(FX);
+const foreign = (r) => !!r.currency && r.currency !== "ILS" && !!FX[r.currency];
+const BOI_PAGE = "https://www.boi.org.il/roles/markets/exchangerates/";
+const rateCache = new Map();
+async function boiRate(currency, date) {
+  const key = `${currency}|${date}`;
+  if (rateCache.has(key)) return rateCache.get(key);
+  const from = new Date(Date.parse(date) - 12 * 864e5).toISOString().slice(0, 10);
+  const url = `https://edge.boi.org.il/FusionEdgeServer/sdmx/v2/data/dataflow/BOI.STATISTICS/EXR/1.0/RER_${currency}_ILS?format=csv&startperiod=${from}&endperiod=${date}`;
+  const job = (async () => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const [head, ...rows] = (await res.text()).trim().split(/\r?\n/).map((l) => l.split(",").map((c) => c.replace(/^"|"$/g, "")));
+      const iDay = head.indexOf("TIME_PERIOD"), iVal = head.indexOf("OBS_VALUE");
+      if (iDay < 0 || iVal < 0) return null;
+      const got = rows.map((r) => ({ day: r[iDay], rate: parseFloat(r[iVal]) }))
+        .filter((r) => r.day <= date && r.rate > 0).sort((a, b) => a.day.localeCompare(b.day)).pop();
+      return got || null;
+    } catch { return null; }
+  })();
+  rateCache.set(key, job);
+  const got = await job;
+  if (!got) rateCache.delete(key);
+  return got;
+}
+// Fills a foreign-currency record's shekel amount (and VAT) from its amount as paid: at the rate typed
+// by hand, or at the representative rate of its date. -> true when it has a rate.
+async function convertCurrency(rec, { refetch = false } = {}) {
+  if (!foreign(rec)) { Object.assign(rec, { currency: "", origAmount: null, rate: null, rateDate: "" }); return true; }
+  if (rec.origAmount == null) return false;
+  if ((refetch || !rec.rate) && rec.date) {
+    const got = await boiRate(rec.currency, rec.date);
+    if (got) Object.assign(rec, { rate: got.rate, rateDate: got.day });
+  }
+  if (!rec.rate) return false;
+  if (!rec.rateDate) rec.rateDate = rec.date || "";
+  rec.amount = round2(rec.origAmount * rec.rate);
+  if (rec.origVat != null) rec.vat = round2(rec.origVat * rec.rate);
+  return true;
+}
+const fxNote = (r) => (foreign(r) ? `💱 שולם ${FX[r.currency].sign}${fmt2(r.origAmount)} (${r.currency})${r.rate
+  ? ` · שער יציג ${r.rate} ליום ${showDate(r.rateDate || r.date)} (בנק ישראל) · נרשם ₪${fmt2(r.amount)}` : " · חסר שער יציג"}` : "");
+const fmt2 = (n) => (n == null ? "" : (+n).toLocaleString("he-IL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+
 // ---------- the form fields of a document ----------
 
 const FIELDS = [
@@ -401,6 +456,10 @@ const FIELDS = [
   { k: "docNo", label: "מספר מסמך" },
   { k: "amount", label: "סכום כולל מע״מ (₪)", type: "number", need: true },
   { k: "vat", label: "מע״מ (₪)", type: "number" },
+  // paid in a foreign currency: the amount as paid and the Bank of Israel representative rate of that day
+  { k: "currency", label: "מטבע התשלום", options: () => FX_CODES.map((c) => [c, FX[c].name]) },
+  { k: "origAmount", label: "סכום במטבע המקורי", type: "number" },
+  { k: "rate", label: "שער יציג", type: "number", exact: true },
   { k: "account", label: "חשבון חובה (פקודות יומן)", options: () => EXPENSE_ACCOUNTS.map(([c, n]) => [c, `${c} · ${n}`]) },
   { k: "details", label: "פירוט", wide: true },
 ];
@@ -415,7 +474,7 @@ function fieldsHtml(v) {
       const all = val && !list.some(([o]) => o === val) ? [[val, val], ...list] : list;
       input = `<select name="${f.k}"><option value=""></option>${all.map(([o, t]) => `<option value="${esc(o)}"${o === val ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
     } else {
-      input = `<input name="${f.k}" type="${f.type || "text"}" value="${esc(val)}"${f.list ? ` list="${f.list}" autocomplete="off"` : ""}${f.type === "number" ? ' step="0.01" inputmode="decimal" dir="ltr"' : ""}>`;
+      input = `<input name="${f.k}" type="${f.type || "text"}" value="${esc(val)}"${f.list ? ` list="${f.list}" autocomplete="off"` : ""}${f.type === "number" ? ` step="${f.exact ? "any" : "0.01"}" inputmode="decimal" dir="ltr"` : ""}>`;
     }
     return `<label class="${f.wide ? "wide " : ""}${f.need && (val === "" || val == null) ? "miss" : ""}" data-need="${f.need ? 1 : ""}">${f.label}${input}</label>`;
   }).join("") + '<span class="calc"></span>';
@@ -435,7 +494,7 @@ function readFields(box) {
   const out = {};
   for (const f of FIELDS) {
     const v = box.querySelector(`[name=${f.k}]`).value.trim();
-    out[f.k] = f.type === "number" ? (v === "" ? null : round2(parseFloat(v))) : v;
+    out[f.k] = f.type === "number" ? (v === "" ? null : f.exact ? parseFloat(v) : round2(parseFloat(v))) : v;
   }
   return out;
 }
@@ -519,6 +578,7 @@ function reviewReasons(r, { exceptId, noText = false, failed = "", skip = [] } =
   const dup = findDuplicate(r, exceptId, skip);
   if (dup) why.push(`ייתכן כפילות (${dup.why}) של: ${dup.what}`);
   if (r.supplier && odd(r.supplier)) why.push("שם הספק נראה משובש");
+  if (foreign(r) && !r.rate) why.push(`תשלום ב-${r.currency}: חסר שער יציג ליום התשלום`);
   return why;
 }
 
@@ -540,6 +600,7 @@ async function aiReading(image, path, onStatus) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(r.date || "") && r.date <= new Date().toISOString().slice(0, 10)) fields.date = r.date;
     for (const k of ["amount", "vat"]) if (typeof r[k] === "number" && r[k] > 0) fields[k] = r[k];
     if (r.docType) fields.docType = r.docType;
+    if (r.currency) fields.currency = r.currency;
     if (r.category) fields.category = r.category;
     const unsure = (r.unclear || []).map((k) => AI_LABELS[k]).filter(Boolean);
     return { fields, account: r.account || "", unclear: unsure.length ? `Claude לא בטוח ב: ${unsure.join(", ")}` : "" };
@@ -859,6 +920,13 @@ async function processFile(file, path, batch) {
     if (reread.accountBy === "hand") Object.assign(rec, { account: reread.account, accountBy: "hand" });
   }
   if (!rec.category) rec.category = learnedCategory(rec);
+  // Paid in a foreign currency: the amount as read is in that currency; the shekel amount comes from the
+  // representative rate of the payment day.
+  if (found.currency && !foreign(rec)) {
+    Object.assign(rec, { currency: found.currency, origAmount: rec.amount, origVat: rec.vat, amount: null, vat: null, rate: null, rateDate: "" });
+    status(0.97, "💱 שער יציג…");
+    await convertCurrency(rec);
+  }
   // The date, the journal account and the service type from the folders and the file's name, where
   // the document itself did not tell them (the account by the kind of item, from all its text).
   fillFromPath(rec, `${text}\n${alt}`);
@@ -1057,7 +1125,7 @@ function renderTable() {
     <td>${r.category ? `<span class="tag">${esc(r.category)}</span>` : ""}</td>
     <td>${esc(r.docType)}${r.docNo ? `<small>מס׳ ${esc(r.docNo)}</small>` : ""}</td>
     <td class="num">${r.vat ? fmt(r.vat) : ""}</td>
-    <td class="num">${r.amount ? fmt(r.amount) : ""}</td>
+    <td class="num">${r.amount ? fmt(r.amount) : ""}${foreign(r) ? `<small title="${esc(fxNote(r))}">${FX[r.currency].sign}${fmt2(r.origAmount)}</small>` : ""}</td>
     <td class="row-del"><button type="button" class="icon-del" data-del="${r.id}" title="מחיקת המסמך" aria-label="מחיקת המסמך">🗑️</button></td></tr>`).join("");
   syncSelection();
   showSide(shownIds.includes(current) ? current : null);
@@ -1152,7 +1220,7 @@ async function showSide(id) {
   $("sideInfo").innerHTML = `${why ? `<p class="dup-warn">⚠️ ${esc(why)}</p>` : '<p class="side-ok">✅ תקין</p>'}
     <div class="side-grid">
       ${line("לקוח", esc(r.client))}${line("ספק", esc(r.supplier))}${line("תאריך", showDate(r.date))}
-      ${line("סכום", r.amount ? fmt(r.amount) : "")}${line("מע״מ", r.vat ? fmt(r.vat) : "")}${line("סוג שירות", esc(r.category))}
+      ${line("סכום", r.amount ? fmt(r.amount) : "")}${line("מטבע", foreign(r) ? esc(fxNote(r).replace(/^💱 /, "")) : "")}${line("מע״מ", r.vat ? fmt(r.vat) : "")}${line("סוג שירות", esc(r.category))}
       ${line("מסמך", esc([r.docType, r.docNo && `מס׳ ${r.docNo}`].filter(Boolean).join(" ")))}${line("שם במסמך", esc(r.customer))}
     </div>
     <p class="side-file">${typeTag(r)}<span class="ltr-path">${esc(r.fileName)}</span></p>`;
@@ -1200,6 +1268,8 @@ async function openEntry(id, fallback, plain = false) {
   $("dlgWhy").hidden = !why;
   $("dlgWhy").textContent = why ? `⚠️ ${why}` : "";
   $("dlgFileName").textContent = r.fileName || "";
+  $("dlgFx").hidden = !foreign(r);
+  $("dlgFx").innerHTML = foreign(r) ? `${esc(fxNote(r))} · <a href="${BOI_PAGE}" target="_blank" rel="noopener">שערי בנק ישראל</a>` : "";
   $("dlgPreview").innerHTML = '<p class="soon">טוען תמונה…</p>';
   // It opens straight on the whole screen: the picture on one half, the details on the other.
   $("entryDlg").classList.add("full");
@@ -1405,6 +1475,19 @@ async function saveEntry(approve) {
   // A journal account different from the one it had was picked by hand.
   const before = records.find((x) => x.id === editing);
   rec.accountBy = before && rec.account === accountOf(before) ? before.accountBy || "auto" : "hand";
+  if (foreign(rec)) {
+    // A rate typed by hand is kept (for the document's date); otherwise a new date or currency takes the
+    // representative rate of that day.
+    rec.origVat = before?.origVat ?? null;
+    const typed = rec.rate != null && rec.rate !== before?.rate;
+    if (typed) rec.rateDate = rec.date;
+    else {
+      const moved = !before || before.date !== rec.date || before.currency !== rec.currency;
+      rec.rateDate = moved ? "" : before.rateDate || "";
+      if (moved) rec.rate = null;
+    }
+    await convertCurrency(rec);
+  } else await convertCurrency(rec);
   const why = approve ? [] : reviewReasons(rec, { exceptId: editing });
   rec.status = why.length ? "review" : "ok";
   rec.reviewWhy = why.join(" · ");
@@ -1737,7 +1820,7 @@ function renderJournal() {
   const acc = (l, inner, cls) => (l.vatLine ? inner : pickable(l, inner, cls));
   $("jRows").innerHTML = lines.map((l) => `<tr data-id="${esc(l.r.id)}" class="${needsReview(l.r) ? "dup" : ""}${l.vatLine ? " vat-line" : ""}">
       <td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.balance)}</td>
-      <td>${needsReview(l.r) && !l.vatLine ? '<span title="מסמך לבדיקה">⚠️</span> ' : ""}${esc(l.details)}</td>
+      <td>${needsReview(l.r) && !l.vatLine ? '<span title="מסמך לבדיקה">⚠️</span> ' : ""}${foreign(l.r) ? `<span class="tag fx" title="${esc(fxNote(l.r))}">${FX[l.r.currency].sign} ${esc(l.r.currency)}</span> ` : ""}${esc(l.details)}</td>
       <td class="num">${acc(l, esc(l.debit), "acc-code")}</td>
       <td class="num">${l.credit}</td>
       <td class="num">${l.amount.toLocaleString("he-IL", { maximumFractionDigits: 2 })}</td>

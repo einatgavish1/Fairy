@@ -34,6 +34,9 @@ From the picture, fill in:
 - amount: the total paid including VAT ("סה"כ לתשלום", "סה"כ כולל מע"מ", the card charge). Not a line
   item, not the number of items, not change given back.
 - vat: the VAT amount (מע"מ) when printed, otherwise null.
+- currency: "" when the document is in shekels; "USD", "EUR" or "GBP" when it was paid in that currency
+  (then amount and vat are in that currency, as printed - the app converts them at the Bank of Israel
+  representative rate of the payment day).
 - docType: the document's type as printed. "קבלה/חשבונית מס" or "חשבונית מס קבלה" is "חשבונית מס קבלה".
 - docNo: the document's own number (מספר חשבונית / קבלה / מסמך), not a card or transaction number.
 - details: what was bought, in a few Hebrew words (for example "משקה סויה, ופל, טישו").
@@ -51,11 +54,12 @@ function schema(docTypes, categories, accounts) {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["supplier", "supplierId", "customer", "date", "amount", "vat", "docType", "docNo", "details", "category", "account", "unclear"],
+    required: ["supplier", "supplierId", "customer", "date", "amount", "vat", "currency", "docType", "docNo", "details", "category", "account", "unclear"],
     properties: {
       supplier: str(80), supplierId: str(12), customer: str(80), date: str(10),
       amount: { anyOf: [{ type: "number" }, { type: "null" }] },
       vat: { anyOf: [{ type: "number" }, { type: "null" }] },
+      currency: { type: "string", enum: ["", "USD", "EUR", "GBP"] },
       docType: { type: "string", enum: ["", ...docTypes] },
       docNo: str(20), details: str(120),
       category: { type: "string", enum: ["", ...categories] },

@@ -4,7 +4,7 @@
 // Used when a document is taken in and when documents already in the system are checked again.
 
 import { suggestAccount, categoryOfAccount } from "./accounts.js?v=6";
-import { findCategory } from "./extract.js?v=14";
+import { findCategory } from "./extract.js?v=15";
 
 const MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
 const iso = (y, m, d) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;

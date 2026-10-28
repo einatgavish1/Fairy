@@ -645,6 +645,25 @@ function findSupplier(lines) {
   return "";
 }
 
+// The currency a document is in, when it is not shekels: its sign or name shows up, and no shekel one does
+// ("Total $55.00", "סה"כ 20.00 אירו"). "" for shekels or when it cannot tell.
+// It counts only beside an amount, and a sign alone ("$", "€") must show up at least twice: a stray sign
+// from a misread picture is not dollars. A bare "£" is left out: on Hebrew receipts it is a misread "₪".
+const nextTo = (sign) => new RegExp(`(?:${sign})\\s?\\d[\\d,]*(?:\\.\\d{1,2})?|\\d(?:[\\d,]*\\.\\d{1,2}|[\\d,]*)\\s?(?:${sign})`, "gi");
+const CURRENCIES = [
+  ["USD", nextTo("\\bUSD\\b|דולר"), nextTo("US\\$|\\$")],
+  ["EUR", nextTo("\\bEUR\\b|אירו|יורו"), nextTo("€")],
+  ["GBP", nextTo("\\bGBP\\b|ליש[\"״']?ט|לירה\\s*שטרלינג"), null],
+];
+const SHEKEL = /₪|ש["״']ח|\bNIS\b|\bILS\b|שקל/i;
+export function findCurrency(text) {
+  if (SHEKEL.test(text)) return "";
+  const count = (re) => (re ? (text.match(re) || []).length : 0);
+  const sure = CURRENCIES.map(([c, name, sign]) => [c, count(name) * 2 + count(sign)])
+    .filter(([c, n]) => n >= 2).sort((a, b) => b[1] - a[1])[0];
+  return sure ? sure[0] : "";
+}
+
 export function findCategory(text, supplier) {
   let best = null;
   for (const [name, re] of CATEGORIES) {
@@ -706,5 +725,6 @@ function parseOne(text, hint = "") {
     docNo: findDocNo(text),
     category: findCategory(text, supplier) || findCategory(hint, supplier),
     details: findDetails(lines),
+    currency: findCurrency(text),
   };
 }

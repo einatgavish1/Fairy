@@ -448,3 +448,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .dealer-log-title { margin: 14px 0 6px; font-size: 15px; }
 .dealer-log { margin: 0; padding-inline-start: 18px; font-size: 14px; color: var(--muted); max-height: 30vh; overflow-y: auto; }
 .dealer-log li { margin-bottom: 4px; }
+/* a payment in a foreign currency: the amount as paid and the rate it was recorded at */
+.fx-note { margin: 0 0 12px; padding: 8px 12px; border-radius: 10px; background: rgba(120, 200, 255, .12); border: 1px solid rgba(120, 200, 255, .5); font-size: 14px; }
+.fx-note a { color: var(--accent); }
+.tag.fx { border-color: rgba(120, 200, 255, .7); color: #bfe6ff; }
