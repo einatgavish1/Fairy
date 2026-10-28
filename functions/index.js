@@ -1,14 +1,16 @@
-// Reads one invoice or receipt with Claude: the app sends the document's picture (and where the file was
-// kept), Claude returns its details. Only a signed-in owner, or someone the owners shared the app with,
-// can call it; the Anthropic key stays in Secret Manager and never reaches the browser.
+// Reads one invoice or receipt with Claude on Google Cloud (Vertex AI): the app sends the document's
+// picture (and where the file was kept), Claude returns its details. Only a signed-in owner, or someone
+// the owners shared the app with, can call it. No key: the function signs in to Vertex AI as the
+// project's own service account, and it is billed with the rest of the Firebase project.
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { defineSecret } from "firebase-functions/params";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
-import Anthropic from "@anthropic-ai/sdk";
+import { AnthropicVertex } from "@anthropic-ai/vertex-sdk";
 
 initializeApp();
-const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
+// Made on the first call, not when the file loads: signing in needs Google Cloud around it.
+let vertex = null;
+const claude = () => (vertex ??= new AnthropicVertex({ projectId: process.env.GCLOUD_PROJECT || "fairy-36dc8", region: "global" }));
 // Keep in step with OWNER_EMAILS in firebase-config.js and isOwner() in firestore.rules.
 const OWNERS = ["einatgavish1@gmail.com", "gavishori@gmail.com"];
 
@@ -68,7 +70,7 @@ const list = (v, max, test) => Array.isArray(v) && v.length > 0 && v.length <= m
 const short = (s) => typeof s === "string" && s.length > 0 && s.length <= 80;
 
 export const readDocument = onCall(
-  { region: "me-west1", secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120, memory: "512MiB", maxInstances: 5 },
+  { region: "me-west1", timeoutSeconds: 120, memory: "512MiB", maxInstances: 5 },
   async (request) => {
     if (!(await allowed(request.auth?.token))) throw new HttpsError("permission-denied", "אין הרשאה");
     const { image, path = "", docTypes, categories, accounts } = request.data || {};
@@ -80,31 +82,30 @@ export const readDocument = onCall(
       throw new HttpsError("invalid-argument", "בקשה לא תקינה");
     }
 
-    const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
     const chart = accounts.map(([code, name]) => `${code} ${name}`).join("\n");
+    const ask = (model) => claude().messages.create({
+      model,
+      max_tokens: 16000,
+      output_config: { effort: "medium", format: { type: "json_schema", schema: schema(docTypes, categories, accounts) } },
+      system: SYSTEM,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: `image/${m[1]}`, data: m[2] } },
+          { type: "text", text: `Where the file was kept: ${path || "(unknown)"}\n\nChart of accounts:\n${chart}` },
+        ],
+      }],
+    });
     let response;
     try {
-      response = await client.beta.messages.create({
-        model: "claude-opus-5-5",
-        max_tokens: 16000,
-        // A declined request is retried on the model Anthropic recommends for it.
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
-        output_config: { effort: "medium", format: { type: "json_schema", schema: schema(docTypes, categories, accounts) } },
-        system: SYSTEM,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: `image/${m[1]}`, data: m[2] } },
-            { type: "text", text: `Where the file was kept: ${path || "(unknown)"}\n\nChart of accounts:\n${chart}` },
-          ],
-        }],
-      });
+      response = await ask("claude-opus-5-5");
+      // A request the model declines is tried once more on Claude Opus 5.
+      if (response.stop_reason === "refusal") response = await ask("claude-opus-5");
     } catch (e) {
-      if (e instanceof Anthropic.RateLimitError) throw new HttpsError("resource-exhausted", "יותר מדי בקשות, נסו שוב בעוד רגע");
-      if (e instanceof Anthropic.AuthenticationError) throw new HttpsError("failed-precondition", "מפתח ה-API של Anthropic לא תקין");
-      if (e instanceof Anthropic.APIError) throw new HttpsError("unavailable", `שירות הקריאה לא זמין (${e.status})`);
-      throw new HttpsError("internal", "הקריאה נכשלה");
+      console.error("Vertex AI:", e.status, e.message);
+      if (e.status === 429) throw new HttpsError("resource-exhausted", "יותר מדי בקשות, נסו שוב בעוד רגע");
+      if (e.status === 401 || e.status === 403 || e.status === 404) throw new HttpsError("failed-precondition", "Claude לא הופעל בפרויקט ב-Google Cloud");
+      throw new HttpsError("unavailable", `שירות הקריאה לא זמין${e.status ? ` (${e.status})` : ""}`);
     }
     if (response.stop_reason === "refusal") throw new HttpsError("aborted", "המסמך לא נקרא");
     const text = response.content.find((b) => b.type === "text")?.text;
