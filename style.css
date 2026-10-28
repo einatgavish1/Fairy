@@ -508,3 +508,25 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .pic-tools a.drive-out { display: inline-flex; align-items: center; padding: 8px 14px; border-radius: 10px; text-decoration: none; }
 .misc-card .g-foot > span { display: inline-flex; gap: 4px; align-items: center; }
 .misc-card .m-whole { padding: 3px 8px; font-size: 13px; }
+
+/* a deletion's question: large and red, each time somewhere else */
+.ask-dlg { position: fixed; inset: auto; margin: 0; width: min(440px, calc(100vw - 32px)); padding: 22px; border: 3px solid #e0463a;
+  background: #3a1416; color: #fff; box-shadow: 0 0 0 6px rgba(224, 70, 58, .35), 0 20px 60px rgba(0, 0, 0, .6); }
+.ask-dlg::backdrop { background: rgba(60, 0, 0, .55); }
+.ask-dlg h2 { color: #ffb4ac; font-size: 22px; }
+.ask-dlg p { white-space: pre-line; font-size: 16px; line-height: 1.5; }
+.ask-dlg.second { border-color: #ffcc00; box-shadow: 0 0 0 6px rgba(255, 204, 0, .4), 0 20px 60px rgba(0, 0, 0, .6); }
+.ask-dlg.second h2 { color: #ffcc00; }
+.ask-btns { display: flex; gap: 10px; justify-content: space-between; margin-top: 16px; }
+.ask-btns button { padding: 10px 18px; font-size: 16px; }
+.ask-dlg.spot-top-right { top: 24px; right: 24px; }
+.ask-dlg.spot-top-left { top: 24px; left: 24px; }
+.ask-dlg.spot-bottom-right { bottom: 24px; right: 24px; }
+.ask-dlg.spot-bottom-left { bottom: 24px; left: 24px; }
+.ask-dlg.spot-middle { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+
+/* dragging one of the other documents onto the expenses */
+.misc-card[draggable="true"] { cursor: grab; }
+.misc-card .m-move { padding: 3px 8px; font-size: 13px; }
+body.dragging-misc #sideNav > button[data-view="docs"], body.dragging-misc #sideNav > button[data-view="journal"] { outline: 2px dashed var(--accent); }
+#sideNav > button.drop-here { background: var(--accent); color: #1b2a4a; }

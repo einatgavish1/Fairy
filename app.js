@@ -360,7 +360,7 @@ $("delClientBtn").onclick = async () => {
   const name = client;
   const docs = records.filter((r) => r.client === name);
   // Two questions: is this the client to delete, and then the name typed to confirm it is for good.
-  if (!confirm(`למחוק את הלקוח "${name}" ואת ${docs.length} המסמכים שלו?`)) return;
+  if (!(await askDelete("מחיקת לקוח", `למחוק את הלקוח "${name}" ואת ${docs.length} המסמכים שלו מהתוכנה?\nהקבצים המקוריים בדרייב ובמחשב לא יימחקו.`))) return;
   const typed = prompt(`מחיקת הלקוח "${name}" ו-${docs.length} המסמכים שלו. אי אפשר לשחזר אחרי המחיקה.\n\nכדי לאשר, הקלידו את שם הלקוח:`);
   if (typed === null) return;
   if (typed.trim() !== name) { toast("השם לא תואם. הלקוח לא נמחק"); return; }
@@ -1242,8 +1242,8 @@ async function deleteDocs(ids) {
   const what = one ? `את המסמך "${[one.supplier || one.fileName, showDate(one.date), one.amount ? fmt(one.amount) : ""].filter(Boolean).join(" · ")}"` : `${ids.length} מסמכים`;
   // Two questions, each its own: what is deleted, and then that it is for good.
   // Only the app's record goes: the original file in Drive or on the computer is never touched.
-  if (!confirm(`למחוק מהתוכנה ${what}?\n\nהקובץ המקורי בדרייב ובמחשב לא יימחק.`)) return false;
-  if (!confirm(`אישור שני ואחרון: ${ids.length === 1 ? "הרשומה והתמונה שלה יימחקו" : `${ids.length} הרשומות והתמונות שלהן יימחקו`} מהתוכנה לצמיתות, ואי אפשר יהיה לשחזר אותן. הקבצים המקוריים נשארים בדרייב. למחוק?`)) return false;
+  if (!(await askDeleteTwice(`למחוק מהתוכנה ${what}?`,
+    `${ids.length === 1 ? "הרשומה והתמונה שלה יימחקו" : `${ids.length} הרשומות והתמונות שלהן יימחקו`} מהתוכנה לצמיתות, ואי אפשר יהיה לשחזר אותן. הקבצים המקוריים נשארים בדרייב.`))) return false;
   // After deleting the one on show, the panel moves on to the next document in the list.
   const next = ids.includes(current) ? shownIds.find((id, i) => i > shownIds.indexOf(current) && !ids.includes(id)) : current;
   let done = 0, failed = 0;
@@ -2219,6 +2219,36 @@ $("dExport").onclick = () => {
   XLSX.writeFile(wb, `תרומות ${who}${$("dYear").value || "כל השנים"}.xlsx`);
 };
 
+// ---------- deletion questions ----------
+// A deletion asks twice, each time in its own place on the screen, large and red, with the buttons the
+// other way round the second time: two clicks in the same spot never delete anything.
+const ASK_SPOTS = ["spot-top-right", "spot-bottom-left", "spot-top-left", "spot-bottom-right", "spot-middle"];
+let lastSpot = "";
+function askDelete(title, text, { second = false, okLabel = "🗑️ למחוק" } = {}) {
+  return new Promise((done) => {
+    const spot = (() => { const free = ASK_SPOTS.filter((s) => s !== lastSpot); return free[Math.floor(Math.random() * free.length)]; })();
+    lastSpot = spot;
+    const dlg = $("askDlg");
+    dlg.className = `ask-dlg ${spot}${second ? " second" : ""}`;
+    $("askTitle").textContent = title;
+    $("askText").textContent = text;
+    const yes = `<button type="button" class="danger ask-yes">${esc(okLabel)}</button>`;
+    const no = '<button type="button" class="ghost ask-no">ביטול</button>';
+    $("askBtns").innerHTML = second ? yes + no : no + yes;
+    const finish = (v) => { dlg.close(); done(v); };
+    $("askBtns").querySelector(".ask-yes").onclick = () => finish(true);
+    $("askBtns").querySelector(".ask-no").onclick = () => finish(false);
+    dlg.oncancel = (e) => { e.preventDefault(); finish(false); };
+    dlg.showModal();
+    $("askBtns").querySelector(".ask-no").focus();
+  });
+}
+// The two questions of a deletion; -> true only when both are answered "delete".
+async function askDeleteTwice(what, finalText) {
+  if (!(await askDelete("מחיקה מהתוכנה", `${what}\nהקובץ המקורי בדרייב ובמחשב לא יימחק.`))) return false;
+  return askDelete("אישור שני ואחרון", finalText, { second: true, okLabel: "🗑️ כן, למחוק לצמיתות" });
+}
+
 // ---------- the original files, in Google Drive ----------
 // The files stay in the client's Google Drive; each document is linked to its file there (driveId), found
 // by its name and the folders it was uploaded from. The app only asks to see the names and places of the
@@ -2353,13 +2383,14 @@ function renderMisc() {
   const type = $("mType").value, year = $("mYear").value;
   const rows = mine.filter((r) => (!type || r.docType === type) && (!year || miscYear(r) === year))
     .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (a.title || "").localeCompare(b.title || "", "he"));
-  $("mList").innerHTML = rows.map((r) => `<div class="g-card misc-card" data-id="${esc(r.id)}">
+  $("mList").innerHTML = rows.map((r) => `<div class="g-card misc-card" data-id="${esc(r.id)}" draggable="true" title="אפשר לגרור אל &quot;מסמכי הוצאות&quot; או &quot;פקודות יומן&quot;">
       <div class="g-pic" data-mpic="${esc(r.id)}" title="לחיצה מגדילה"><small class="soon">טוען…</small></div>
       <div class="g-info">
         <input class="m-title" value="${esc(r.title || r.fileName || "")}" title="שם המסמך" aria-label="שם המסמך">
         <select class="m-type" aria-label="סוג המסמך">${MISC_NAMES.map((n) => `<option${n === r.docType ? " selected" : ""}>${esc(n)}</option>`).join("")}</select>
         <span class="g-foot"><small>${esc([showDate(r.date), r.fileName].filter(Boolean).join(" · "))}</small>
-          <span><button type="button" class="ghost m-whole" data-mwhole="${esc(r.id)}" title="הקובץ המלא בדרייב">📄 כל הקובץ</button>
+          <span><button type="button" class="ghost m-move" data-mmove="${esc(r.id)}" title="להעביר למסמכי ההוצאות ולרשום בפקודות היומן">➡️ להוצאות</button>
+          <button type="button" class="ghost m-whole" data-mwhole="${esc(r.id)}" title="הקובץ המלא בדרייב">📄 כל הקובץ</button>
           <button type="button" class="icon-del" data-mdel="${esc(r.id)}" title="מחיקת המסמך" aria-label="מחיקת המסמך">🗑️</button></span></span>
       </div></div>`).join("");
   $("mEmpty").hidden = rows.length > 0;
@@ -2373,6 +2404,8 @@ $("mYear").addEventListener("input", renderMisc);
 $("mList").addEventListener("click", async (e) => {
   const pic = e.target.closest("[data-mpic]");
   if (pic) { const src = await previewOf(pic.dataset.mpic); if (src) zoom(src); return; }
+  const move = e.target.closest("[data-mmove]");
+  if (move) { moveToExpenses(move.dataset.mmove); return; }
   const whole = e.target.closest("[data-mwhole]");
   if (whole) {
     const r = miscDocs.find((x) => x.id === whole.dataset.mwhole);
@@ -2393,8 +2426,8 @@ $("mList").addEventListener("click", async (e) => {
   const r = miscDocs.find((x) => x.id === del.dataset.mdel);
   if (!r) return;
   // two questions, as with every deletion
-  if (!confirm(`למחוק מהתוכנה את "${r.title || r.fileName}"?\n\nהקובץ המקורי בדרייב ובמחשב לא יימחק.`)) return;
-  if (!confirm("אישור שני ואחרון: הרשומה והתמונה שלה יימחקו מהתוכנה לצמיתות, ואי אפשר יהיה לשחזר אותן. הקובץ המקורי נשאר בדרייב. למחוק?")) return;
+  if (!(await askDeleteTwice(`למחוק מהתוכנה את "${r.title || r.fileName}"?`,
+    "הרשומה והתמונה שלה יימחקו מהתוכנה לצמיתות, ואי אפשר יהיה לשחזר אותן. הקובץ המקורי נשאר בדרייב."))) return;
   try { await store.remove(r.id); previewCache.delete(r.id); toast("המסמך נמחק"); } catch (err) { toast("המחיקה נכשלה: " + err.message); }
 });
 $("mList").addEventListener("change", async (e) => {
@@ -2405,6 +2438,60 @@ $("mList").addEventListener("change", async (e) => {
   if (!upd) return;
   try { await store.update(card.dataset.id, upd); toast("נשמר"); } catch (err) { toast("השמירה נכשלה: " + err.message); }
 });
+
+// A document of the other documents that is an expense after all (a receipt uploaded there): dragged onto
+// "מסמכי הוצאות" or "פקודות יומן" (or its "להוצאות" button), it is read as an expense from the text kept
+// with it and becomes a line in the journal at once.
+async function moveToExpenses(id) {
+  const r = miscDocs.find((x) => x.id === id);
+  if (!r) return;
+  const [text = "", alt = ""] = String(r.text || "").split("\n----\n");
+  const found = parseText(text, "", alt);
+  const rec = {
+    kind: "", client: r.client, customer: found.customer || "",
+    date: found.date || r.date || "", supplier: found.supplier || "", supplierId: found.supplierId || "",
+    category: found.category || "", docType: found.docType || "", docNo: found.docNo || "",
+    amount: found.amount ?? null, vat: found.vat ?? null, details: found.details || "",
+  };
+  if (found.currency) {
+    Object.assign(rec, { currency: found.currency, origAmount: rec.amount, origVat: rec.vat, amount: null, vat: null, rate: null, rateDate: "" });
+    await convertCurrency(rec);
+  }
+  if (!rec.category) rec.category = learnedCategory(rec);
+  // the date, account and service type from the file's folders and name, where the text did not tell them
+  Object.assign(rec, fillFromPath({ ...rec, fileName: r.fileName }, `${text}\n${alt}`));
+  const why = reviewReasons({ ...r, ...rec }, { exceptId: r.id });
+  rec.status = why.length ? "review" : "ok";
+  rec.reviewWhy = why.join(" · ");
+  try {
+    await store.update(r.id, rec);
+    toast(`"${r.title || r.fileName}" הועבר למסמכי ההוצאות ונרשם בפקודות היומן${why.length ? " (מסומן לבדיקה)" : ""}`);
+  } catch (err) { toast("ההעברה נכשלה: " + err.message); }
+}
+for (const view of ["docs", "journal"]) {
+  const target = document.querySelector(`#sideNav > button[data-view="${view}"]`);
+  target.addEventListener("dragover", (e) => {
+    if (!e.dataTransfer.types.includes("application/x-fairy-misc")) return;
+    e.preventDefault();
+    target.classList.add("drop-here");
+  });
+  target.addEventListener("dragleave", () => target.classList.remove("drop-here"));
+  target.addEventListener("drop", (e) => {
+    const id = e.dataTransfer.getData("application/x-fairy-misc");
+    target.classList.remove("drop-here");
+    if (!id) return;
+    e.preventDefault();
+    moveToExpenses(id);
+  });
+}
+$("mList").addEventListener("dragstart", (e) => {
+  const card = e.target.closest(".misc-card");
+  if (!card) return;
+  e.dataTransfer.setData("application/x-fairy-misc", card.dataset.id);
+  e.dataTransfer.effectAllowed = "move";
+  document.body.classList.add("dragging-misc");
+});
+$("mList").addEventListener("dragend", () => document.body.classList.remove("dragging-misc"));
 
 // Upload: read like any document (its picture and text), saved as the chosen client's other document.
 $("mPick").onclick = (e) => { e.stopPropagation(); $("mFile").click(); };
@@ -2636,10 +2723,10 @@ $("shareBtn").onclick = () => {
   unsubAccess ||= store.watchAccess((emails) => {
     $("shareList").innerHTML = emails.map((e) => `<li><span dir="ltr">${esc(e)}</span><button type="button" class="ghost" data-e="${esc(e)}">הסרה</button></li>`).join("")
       || '<li class="soon">עוד לא שותף אף אחד</li>';
-    $("shareList").querySelectorAll("button").forEach((b) => (b.onclick = () => {
+    $("shareList").querySelectorAll("button").forEach((b) => (b.onclick = async () => {
       // two questions before someone loses access
-      if (!confirm(`להסיר את ${b.dataset.e} מהשיתוף?`)) return;
-      if (!confirm(`אישור שני: ${b.dataset.e} לא יוכל יותר להיכנס למערכת ולראות את המסמכים. להסיר?`)) return;
+      if (!(await askDelete("הסרה מהשיתוף", `להסיר את ${b.dataset.e} מהשיתוף?`, { okLabel: "להסיר" }))) return;
+      if (!(await askDelete("אישור שני ואחרון", `${b.dataset.e} לא יוכל יותר להיכנס למערכת ולראות את המסמכים.`, { second: true, okLabel: "כן, להסיר" }))) return;
       store.removeAccess(b.dataset.e);
     }));
   });

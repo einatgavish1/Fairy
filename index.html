@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=35">
+<link rel="stylesheet" href="style.css?v=37">
 </head>
 <body>
 
@@ -305,7 +305,7 @@
         <select id="mYear" title="שנה"></select>
       </div>
     </div>
-    <p class="hint">מסמכים של הלקוח שאינם הוצאות: חוזה ושכר דירה, טופס 106, אישורים ועוד. הם נשמרים כאן בלבד, ולא נכנסים לפקודות היומן ולדוחות. סוג המסמך מזוהה לבד, ואפשר לשנות אותו ואת השם.</p>
+    <p class="hint">מסמכים של הלקוח שאינם הוצאות: חוזה ושכר דירה, טופס 106, אישורים ועוד. הם נשמרים כאן בלבד, ולא נכנסים לפקודות היומן ולדוחות. סוג המסמך מזוהה לבד, ואפשר לשנות אותו ואת השם. מסמך שהוא בעצם הוצאה: גוררים אותו אל "מסמכי הוצאות" או "פקודות יומן" בתפריט, או לוחצים "➡️ להוצאות".</p>
     <p class="soon" id="miscNeedClient" hidden>בחרו לקוח ברשימה שבתפריט הצד כדי להעלות ולראות את המסמכים שלו.</p>
     <div id="miscMain">
       <div class="drop drop-small" id="mDrop">
@@ -407,6 +407,13 @@
   </form>
 </dialog>
 
+<!-- A deletion's question: large, red, each time in another place on the screen. -->
+<dialog id="askDlg" class="ask-dlg">
+  <h2 id="askTitle"></h2>
+  <p id="askText"></p>
+  <div class="ask-btns" id="askBtns"></div>
+</dialog>
+
 <dialog id="shareDlg">
   <form method="dialog">
     <h2>שיתוף</h2>
@@ -425,6 +432,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=53"></script>
+<script type="module" src="app.js?v=54"></script>
 </body>
 </html>
