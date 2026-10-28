@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=30">
+<link rel="stylesheet" href="style.css?v=31">
 </head>
 <body>
 
@@ -137,12 +137,18 @@
         <option value="word">Word</option>
       </select>
       <input type="month" id="monthFilter" title="חודש">
+      <!-- the list as rows, or as a gallery of the documents' pictures -->
+      <span class="view-switch" role="group" aria-label="תצוגה">
+        <button type="button" class="ghost on" data-docview="list" title="תצוגת רשימה">☰ רשימה</button>
+        <button type="button" class="ghost" data-docview="gallery" title="תצוגת גלריה">🖼️ גלריה</button>
+      </span>
     </div>
     <div class="bulk-bar" id="bulkBar" hidden>
       <b id="selCount"></b>
       <button type="button" class="danger" id="bulkDelete">🗑️ מחיקת המסומנים</button>
       <button type="button" class="ghost" id="bulkClear">ביטול הסימון</button>
     </div>
+    <div class="gallery" id="gallery" hidden></div>
     <div class="docs-split">
       <div class="tablewrap">
         <table>
@@ -155,7 +161,7 @@
             <th>מסמך</th>
             <th class="num">מע״מ</th>
             <th class="num">סכום</th>
-            <th></th>
+            <th title="נבדק · מחיקה">✓</th>
           </tr></thead>
           <tbody id="rows"></tbody>
           <tfoot><tr><td></td><td colspan="5">סה״כ מוצג</td><td class="num" id="shownVat"></td><td class="num" id="shownSum"></td><td></td></tr></tfoot>
@@ -209,6 +215,8 @@
         <option value="ok">✓ תקינות בלבד</option>
         <option value="guessed">חשבון שנקבע אוטומטית</option>
         <option value="hand">חשבון שנבחר ביד</option>
+        <option value="checked">✓ נבדקו</option>
+        <option value="unchecked">עוד לא נבדקו</option>
       </select>
       <input type="number" id="jMin" placeholder="מסכום" min="0" step="any" class="j-amount">
       <input type="number" id="jMax" placeholder="עד סכום" min="0" step="any" class="j-amount">
@@ -225,9 +233,10 @@
           <th class="sort num" data-jsort="amount">סכום</th>
           <th class="sort" data-jsort="ref">אסמכתא</th>
           <th class="sort" data-jsort="accName">תאור חשבון חובה</th>
+          <th class="sort" data-jsort="checked" title="נבדק · מיון">✓</th>
         </tr></thead>
         <tbody id="jRows"></tbody>
-        <tfoot><tr><td colspan="7" id="jShown"></td><td class="num" id="jSum"></td><td colspan="2"></td></tr></tfoot>
+        <tfoot><tr><td colspan="7" id="jShown"></td><td class="num" id="jSum"></td><td colspan="3"></td></tr></tfoot>
       </table>
       <p class="empty" id="jEmpty" hidden>אין שורות שמתאימות לסינון.</p>
     </div>
@@ -387,6 +396,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=47"></script>
+<script type="module" src="app.js?v=48"></script>
 </body>
 </html>

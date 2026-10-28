@@ -1130,9 +1130,10 @@ function renderTable() {
     <td>${esc(r.docType)}${r.docNo ? `<small>מס׳ ${esc(r.docNo)}</small>` : ""}</td>
     <td class="num">${r.vat ? fmt(r.vat) : ""}</td>
     <td class="num">${r.amount ? fmt(r.amount) : ""}${foreign(r) ? `<small title="${esc(fxNote(r))}">${FX[r.currency].sign}${fmt2(r.origAmount)}</small>` : ""}</td>
-    <td class="row-del"><button type="button" class="icon-del" data-del="${r.id}" title="מחיקת המסמך" aria-label="מחיקת המסמך">🗑️</button></td></tr>`).join("");
+    <td class="row-del">${tickBtn(r)}<button type="button" class="icon-del" data-del="${r.id}" title="מחיקת המסמך" aria-label="מחיקת המסמך">🗑️</button></td></tr>`).join("");
   syncSelection();
   showSide(shownIds.includes(current) ? current : null);
+  if (docView === "gallery") renderGallery(rows);
   const sum = (k) => round2(rows.reduce((s, r) => s + (r[k] || 0), 0));
   $("shownSum").textContent = fmt(sum("amount"));
   $("shownVat").textContent = fmt(sum("vat"));
@@ -1197,6 +1198,75 @@ async function deleteDocs(ids) {
   toast(failed ? `נמחקו ${done}. ${failed} לא נמחקו` : done === 1 ? "המסמך נמחק" : `נמחקו ${done} מסמכים`);
   return !failed;
 }
+
+// ---------- the documents as a gallery ----------
+// The same documents (same filters and order) as cards with their pictures; a click opens the document.
+// The pictures load as their cards come into view, so a long list stays quick.
+let docView = (() => { try { return localStorage.getItem("fairy-doc-view") || "list"; } catch { return "list"; } })();
+let galleryWatch = null;
+function setDocView(v) {
+  docView = v;
+  try { localStorage.setItem("fairy-doc-view", v); } catch { /* the choice just is not kept */ }
+  document.querySelectorAll("[data-docview]").forEach((b) => b.classList.toggle("on", b.dataset.docview === v));
+  $("gallery").hidden = v !== "gallery";
+  document.querySelector(".docs-split").hidden = v === "gallery";
+  renderTable();
+}
+document.querySelectorAll("[data-docview]").forEach((b) => (b.onclick = () => setDocView(b.dataset.docview)));
+// the view chosen last time
+document.querySelectorAll("[data-docview]").forEach((b) => b.classList.toggle("on", b.dataset.docview === docView));
+$("gallery").hidden = docView !== "gallery";
+document.querySelector(".docs-split").hidden = docView === "gallery";
+function renderGallery(rows) {
+  galleryWatch?.disconnect();
+  $("gallery").innerHTML = rows.map((r) => `<div class="g-card${needsReview(r) ? " dup" : ""}${r.checked ? " checked" : ""}" data-id="${esc(r.id)}" tabindex="0">
+      <div class="g-pic" data-pic="${esc(r.id)}"><small class="soon">${/›/.test(r.fileName || "") ? "שורה מאקסל" : "טוען…"}</small></div>
+      <div class="g-info">
+        <b>${typeTag(r)}${statusTag(r)}${esc(r.supplier) || `<span class="soon">${esc(r.fileName)}</span>`}</b>
+        <small>${esc([showDate(r.date), r.category].filter(Boolean).join(" · "))}</small>
+        <span class="g-foot"><b>${r.amount ? fmt(r.amount) : ""}</b>${tickBtn(r)}</span>
+      </div></div>`).join("") || '<p class="empty">אין מסמכים להצגה.</p>';
+  galleryWatch = new IntersectionObserver((seen) => {
+    for (const e of seen) {
+      if (!e.isIntersecting) continue;
+      galleryWatch.unobserve(e.target);
+      const id = e.target.dataset.pic;
+      previewOf(id).then((src) => {
+        if (src) e.target.innerHTML = `<img src="${src}" alt="" loading="lazy">`;
+        else if (!/›/.test(records.find((x) => x.id === id)?.fileName || "")) e.target.innerHTML = '<small class="soon">אין תמונה</small>';
+      });
+    }
+  }, { rootMargin: "300px" });
+  $("gallery").querySelectorAll("[data-pic]").forEach((el) => galleryWatch.observe(el));
+}
+$("gallery").addEventListener("click", (e) => {
+  const card = e.target.closest(".g-card");
+  if (card) { current = card.dataset.id; answerReview(); openEntry(card.dataset.id); }
+});
+$("gallery").addEventListener("keydown", (e) => {
+  const card = e.target.closest(".g-card");
+  if (card && e.key === "Enter") openEntry(card.dataset.id);
+});
+
+// ---------- the green tick: a document a person went over ----------
+// Set by "שמירה ואישור", by applying a change to the documents ticked in the list, or by hand in the
+// journal, the documents' list and the gallery (a click turns it on or off).
+const tickBtn = (r) => `<button type="button" class="tick${r.checked ? " on" : ""}" data-tick="${esc(r.id)}"
+  title="${r.checked ? "נבדק · לחיצה מבטלת" : "לא סומן כנבדק · לחיצה מסמנת"}" aria-pressed="${!!r.checked}">✓</button>`;
+async function toggleTick(id) {
+  const r = records.find((x) => x.id === id);
+  if (!r) return;
+  try { await store.update(id, { checked: !r.checked }); }
+  catch (err) { toast("השמירה נכשלה: " + err.message); }
+}
+// one listener for every list with ticks
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-tick]");
+  if (!b) return;
+  e.stopPropagation();
+  e.preventDefault();
+  toggleTick(b.dataset.tick);
+}, true);
 
 // ---------- the document beside the list ----------
 
@@ -1548,6 +1618,8 @@ async function saveEntry(approve) {
   } else await convertCurrency(rec);
   const why = approve ? [] : reviewReasons(rec, { exceptId: editing });
   rec.status = why.length ? "review" : "ok";
+  // "שמירה ואישור" ticks it as checked; a plain save keeps the tick it had
+  rec.checked = approve || !!before?.checked;
   rec.reviewWhy = why.join(" · ");
   try {
     const id = editing;
@@ -1609,7 +1681,7 @@ async function applyToDocs(ids, change) {
   for (const xid of ids) {
     const x = records.find((r) => r.id === xid);
     if (!x) continue;
-    const upd = change(x);
+    const upd = { ...change(x), checked: true };
     if (x.status === "review") {
       const why = reviewReasons({ ...x, ...upd }, { exceptId: x.id, noText: (x.reviewWhy || "").includes("לא נמצא טקסט") });
       Object.assign(upd, { status: why.length ? "review" : "ok", reviewWhy: why.join(" · ") });
@@ -1851,6 +1923,7 @@ let jSort = { key: "date", dir: 1 };
 const J_SORT = {
   date: (l) => l.date, details: (l) => l.details, debit: (l) => +l.debit, credit: (l) => +l.credit,
   amount: (l) => l.amount, ref: (l) => (/^\d+$/.test(l.ref) ? +l.ref : l.ref), accName: (l) => accountName(l.debit),
+  checked: (l) => (l.r.checked ? 1 : 0),
 };
 function sortLines(lines) {
   const get = J_SORT[jSort.key];
@@ -1881,6 +1954,8 @@ function journalLines(base = yearLines()) {
     if (status === "ok" && needsReview(l.r)) return false;
     if (status === "hand" && !byHand(l.r)) return false;
     if (status === "guessed" && byHand(l.r)) return false;
+    if (status === "checked" && !l.r.checked) return false;
+    if (status === "unchecked" && l.r.checked) return false;
     if (min != null && l.amount < min) return false;
     if (max != null && l.amount > max) return false;
     if (q) {
@@ -1929,7 +2004,8 @@ function renderJournal() {
       <td class="num">${l.credit}</td>
       <td class="num">${l.amount.toLocaleString("he-IL", { maximumFractionDigits: 2 })}</td>
       <td class="num">${esc(l.ref)}</td>
-      <td>${acc(l, esc(accountName(l.debit)), "acc-name")}</td></tr>`).join("");
+      <td>${acc(l, esc(accountName(l.debit)), "acc-name")}</td>
+      <td class="tick-cell">${l.vatLine ? "" : tickBtn(l.r)}</td></tr>`).join("");
   $("jEmpty").hidden = lines.length > 0;
   document.querySelectorAll("#jHead [data-jsort]").forEach((th) => {
     th.querySelector(".arrow")?.remove();
