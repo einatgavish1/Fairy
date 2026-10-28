@@ -344,6 +344,8 @@ $("delClientBtn").onclick = async () => {
   if (!client || client === ALL) return;
   const name = client;
   const docs = records.filter((r) => r.client === name);
+  // Two questions: is this the client to delete, and then the name typed to confirm it is for good.
+  if (!confirm(`למחוק את הלקוח "${name}" ואת ${docs.length} המסמכים שלו?`)) return;
   const typed = prompt(`מחיקת הלקוח "${name}" ו-${docs.length} המסמכים שלו. אי אפשר לשחזר אחרי המחיקה.\n\nכדי לאשר, הקלידו את שם הלקוח:`);
   if (typed === null) return;
   if (typed.trim() !== name) { toast("השם לא תואם. הלקוח לא נמחק"); return; }
@@ -871,13 +873,19 @@ async function processFile(file, path, batch) {
   const existing = hash && !inFlight.get(hash) && records.find((r) => r.fileHash === hash);
   const reread = existing && needsReview(existing) ? existing : null;
   const sameFile = hash && !reread && (inFlight.get(hash) || findDuplicate({ fileHash: hash })?.what);
+  let keptTwin = false; // the person already said to keep it: not asked again about its content
+  // The same file, its record still waiting for review: read again into that record, if the person says so.
+  if (reread) {
+    if (!(await askKeepDuplicate(el, show, "הקובץ הזה כבר קיים במערכת ומחכה לבדיקה", describe(reread), "📖 לקרוא מחדש ולעדכן"))) {
+      progDone(item, "skipped");
+      show("dup", `⏭️ <b>לא נקלט: הקובץ כבר קיים במערכת</b><br><small>${esc(describe(reread))}</small>`);
+      return;
+    }
+    body.innerHTML = '<div class="status"><span class="label">ממתין…</span><div class="bar"><i></i></div></div>';
+  }
   if (sameFile) {
-    progDone(item, "skipped");
-    show("dup", `⏭️ <b>דולג: הקובץ הזה כבר קיים במערכת</b><br><small>${esc(sameFile)}</small>`, '<button class="ghost go-on">לקלוט בכל זאת</button>');
-    const goOn = await new Promise((ok) => (el.querySelector(".go-on").onclick = () => ok(true)));
-    if (!goOn) return;
-    prog.total++;
-    item.counted = false;
+    if (!(await askKeepDuplicate(el, show, "הקובץ הזה בדיוק כבר קיים במערכת", sameFile))) { progDone(item, "skipped"); show("dup", `⏭️ <b>לא נקלט: הקובץ כבר קיים במערכת</b><br><small>${esc(sameFile)}</small>`); return; }
+    keptTwin = true;
     body.innerHTML = '<div class="status"><span class="label">ממתין…</span><div class="bar"><i></i></div></div>';
   }
   if (hash) inFlight.set(hash, path);
@@ -934,6 +942,15 @@ async function processFile(file, path, batch) {
   rec.status = failed ? "failed" : why.length ? "review" : "ok";
   rec.reviewWhy = why.join(" · ");
 
+  // The same document already in the system by what it says (another scan or photo of it): saved only
+  // when the person says so.
+  const twin = !reread && !failed && !keptTwin && findDuplicate(rec);
+  if (twin && !(await askKeepDuplicate(el, show, `נראה שהמסמך כבר קיים במערכת (${twin.why})`, twin.what))) {
+    inFlight.delete(hash);
+    progDone(item, "skipped");
+    show("dup", `⏭️ <b>לא נשמר: המסמך כבר קיים במערכת</b><br><small>${esc(twin.what)}</small>`);
+    return;
+  }
   try {
     let id;
     if (reread) { id = reread.id; await store.update(id, rec); }
@@ -952,6 +969,28 @@ async function processFile(file, path, batch) {
     progDone(item, "failed");
     show("failed", `❌ <b>השמירה נכשלה</b> · ${esc(e.message)}`);
   }
+}
+
+// A file that is already in the system (the same file, or the same document by its content) waits for the
+// person: keep it anyway, or leave it out. A note at the top counts the files still waiting.
+let dupWaiting = 0;
+function renderDupWait() {
+  $("dupWait").hidden = !dupWaiting;
+  $("dupWait").textContent = `⚠️ ${dupWaiting === 1 ? "קובץ אחד כבר קיים" : `${dupWaiting} קבצים כבר קיימים`} במערכת ו${dupWaiting === 1 ? "ממתין" : "ממתינים"} לאישור שלך: לשמור או לא (מסומנים בצהוב ברשימה).`;
+}
+async function askKeepDuplicate(el, show, title, what, keepLabel = "💾 לשמור בכל זאת") {
+  dupWaiting++;
+  renderDupWait();
+  toast(`⚠️ ${title}. אשרו ברשימת הקליטה`);
+  show("dup ask", `⚠️ <b>${esc(title)}</b><br><small>${esc(what)}</small>`,
+    `<button class="primary keep-it">${keepLabel}</button><button class="ghost skip-it">✕ לא</button>`);
+  const keep = await new Promise((done) => {
+    el.querySelector(".keep-it").onclick = () => done(true);
+    el.querySelector(".skip-it").onclick = () => done(false);
+  });
+  dupWaiting--;
+  renderDupWait();
+  return keep;
 }
 
 // An Excel or CSV file. A table of expenses becomes one document per row, each checked like any
@@ -1184,7 +1223,9 @@ async function deleteDocs(ids) {
   if (!ids.length) return false;
   const one = ids.length === 1 && records.find((r) => r.id === ids[0]);
   const what = one ? `את המסמך "${[one.supplier || one.fileName, showDate(one.date), one.amount ? fmt(one.amount) : ""].filter(Boolean).join(" · ")}"` : `${ids.length} מסמכים`;
-  if (!confirm(`למחוק ${what}?\nאי אפשר לשחזר אחרי המחיקה.`)) return false;
+  // Two questions, each its own: what is deleted, and then that it is for good.
+  if (!confirm(`למחוק ${what}?`)) return false;
+  if (!confirm(`אישור שני ואחרון: ${ids.length === 1 ? "המסמך והתמונה שלו יימחקו" : `${ids.length} המסמכים והתמונות שלהם יימחקו`} לצמיתות, ואי אפשר יהיה לשחזר. למחוק?`)) return false;
   // After deleting the one on show, the panel moves on to the next document in the list.
   const next = ids.includes(current) ? shownIds.find((id, i) => i > shownIds.indexOf(current) && !ids.includes(id)) : current;
   let done = 0, failed = 0;
@@ -2352,7 +2393,12 @@ $("shareBtn").onclick = () => {
   unsubAccess ||= store.watchAccess((emails) => {
     $("shareList").innerHTML = emails.map((e) => `<li><span dir="ltr">${esc(e)}</span><button type="button" class="ghost" data-e="${esc(e)}">הסרה</button></li>`).join("")
       || '<li class="soon">עוד לא שותף אף אחד</li>';
-    $("shareList").querySelectorAll("button").forEach((b) => (b.onclick = () => store.removeAccess(b.dataset.e)));
+    $("shareList").querySelectorAll("button").forEach((b) => (b.onclick = () => {
+      // two questions before someone loses access
+      if (!confirm(`להסיר את ${b.dataset.e} מהשיתוף?`)) return;
+      if (!confirm(`אישור שני: ${b.dataset.e} לא יוכל יותר להיכנס למערכת ולראות את המסמכים. להסיר?`)) return;
+      store.removeAccess(b.dataset.e);
+    }));
   });
   $("shareDlg").showModal();
 };

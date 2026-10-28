@@ -488,3 +488,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .g-info small { color: var(--muted); }
 .g-foot { display: flex; align-items: center; justify-content: space-between; }
 .gallery[hidden], .docs-split[hidden] { display: none; }
+/* a file already in the system, waiting for the person: keep it or not */
+.dup-wait { margin: 10px 0; padding: 10px 14px; border-radius: 10px; font-weight: 700; animation: review-blink 1.2s ease-in-out infinite; border: 1px solid var(--accent); }
+.item.ask { border-color: var(--accent); animation: review-blink 1.2s ease-in-out infinite; }
+.item.ask .item-actions { display: flex; gap: 8px; }
