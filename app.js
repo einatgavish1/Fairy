@@ -1241,8 +1241,9 @@ async function deleteDocs(ids) {
   const one = ids.length === 1 && records.find((r) => r.id === ids[0]);
   const what = one ? `את המסמך "${[one.supplier || one.fileName, showDate(one.date), one.amount ? fmt(one.amount) : ""].filter(Boolean).join(" · ")}"` : `${ids.length} מסמכים`;
   // Two questions, each its own: what is deleted, and then that it is for good.
-  if (!confirm(`למחוק ${what}?`)) return false;
-  if (!confirm(`אישור שני ואחרון: ${ids.length === 1 ? "המסמך והתמונה שלו יימחקו" : `${ids.length} המסמכים והתמונות שלהם יימחקו`} לצמיתות, ואי אפשר יהיה לשחזר. למחוק?`)) return false;
+  // Only the app's record goes: the original file in Drive or on the computer is never touched.
+  if (!confirm(`למחוק מהתוכנה ${what}?\n\nהקובץ המקורי בדרייב ובמחשב לא יימחק.`)) return false;
+  if (!confirm(`אישור שני ואחרון: ${ids.length === 1 ? "הרשומה והתמונה שלה יימחקו" : `${ids.length} הרשומות והתמונות שלהן יימחקו`} מהתוכנה לצמיתות, ואי אפשר יהיה לשחזר אותן. הקבצים המקוריים נשארים בדרייב. למחוק?`)) return false;
   // After deleting the one on show, the panel moves on to the next document in the list.
   const next = ids.includes(current) ? shownIds.find((id, i) => i > shownIds.indexOf(current) && !ids.includes(id)) : current;
   let done = 0, failed = 0;
@@ -2392,8 +2393,8 @@ $("mList").addEventListener("click", async (e) => {
   const r = miscDocs.find((x) => x.id === del.dataset.mdel);
   if (!r) return;
   // two questions, as with every deletion
-  if (!confirm(`למחוק את "${r.title || r.fileName}"?`)) return;
-  if (!confirm("אישור שני ואחרון: המסמך והתמונה שלו יימחקו לצמיתות, ואי אפשר יהיה לשחזר. למחוק?")) return;
+  if (!confirm(`למחוק מהתוכנה את "${r.title || r.fileName}"?\n\nהקובץ המקורי בדרייב ובמחשב לא יימחק.`)) return;
+  if (!confirm("אישור שני ואחרון: הרשומה והתמונה שלה יימחקו מהתוכנה לצמיתות, ואי אפשר יהיה לשחזר אותן. הקובץ המקורי נשאר בדרייב. למחוק?")) return;
   try { await store.remove(r.id); previewCache.delete(r.id); toast("המסמך נמחק"); } catch (err) { toast("המחיקה נכשלה: " + err.message); }
 });
 $("mList").addEventListener("change", async (e) => {
