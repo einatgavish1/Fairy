@@ -466,7 +466,7 @@ const FIELDS = [
   { k: "vat", label: "מע״מ (₪)", type: "number" },
   // paid in a foreign currency: the amount as paid and the Bank of Israel representative rate of that day
   { k: "currency", label: "מטבע התשלום", options: () => FX_CODES.map((c) => [c, FX[c].name]) },
-  { k: "origAmount", label: "סכום במטבע המקורי", type: "number" },
+  { k: "origAmount", label: "סכום מט"ח", type: "number" },
   { k: "rate", label: "שער יציג", type: "number", exact: true },
   { k: "account", label: "חשבון חובה (פקודות יומן)", options: () => EXPENSE_ACCOUNTS.map(([c, n]) => [c, `${c} · ${n}`]) },
   // electricity, water, municipal tax, gas: the bill as paid, and the part of it recognised as the expense
