@@ -1049,6 +1049,7 @@ function fillSelect(sel, values, allLabel) {
 
 function renderAll() {
   markDuplicates();
+  if (records.length) fillMissingRates();
   renderClientPickers();
   if (client === null) return;
   const names = clientNames();
@@ -1280,9 +1281,60 @@ async function openEntry(id, fallback, plain = false) {
   $("dlgPrev").disabled = i <= 0;
   $("dlgNext").disabled = i < 0 || i >= list.length - 1;
   if (!$("entryDlg").open) $("entryDlg").showModal();
+  if (foreign(r) && !r.rate) fillRate(id);
   const src = await previewOf(id);
   if (editing !== id) return;
   dialogPicture(id, src, r);
+}
+
+// A foreign-currency document without its rate: the representative rate of its date is looked up and put
+// in the form with the shekel amount, to check and save; also again when the date or the currency changes.
+async function fillRate(id) {
+  const box = $("dlgFields"), f = readFields(box);
+  if (!foreign(f) || f.origAmount == null || !f.date) return;
+  $("dlgFx").hidden = false;
+  $("dlgFx").textContent = `💱 שולף את השער היציג של ${f.currency} ליום ${showDate(f.date)} מבנק ישראל…`;
+  const got = await boiRate(f.currency, f.date);
+  if (editing !== id) return;
+  if (!got) {
+    $("dlgFx").innerHTML = `💱 שולם ${FX[f.currency].sign}${fmt2(f.origAmount)} (${f.currency}). לא הצלחתי לשלוף את השער מבנק ישראל: הקלידו אותו בשדה "שער יציג" · <a href="${BOI_PAGE}" target="_blank" rel="noopener">שערי בנק ישראל</a>`;
+    return;
+  }
+  const set = (k, v) => { const el = box.querySelector(`[name=${k}]`); if (el) el.value = v; };
+  set("rate", got.rate);
+  set("amount", round2(f.origAmount * got.rate));
+  box.dispatchEvent(new Event("input"));
+  const shown = { ...f, rate: got.rate, rateDate: got.day, amount: round2(f.origAmount * got.rate) };
+  $("dlgFx").innerHTML = `${esc(fxNote(shown))} · נשלף מבנק ישראל, לחצו שמירה · <a href="${BOI_PAGE}" target="_blank" rel="noopener">שערי בנק ישראל</a>`;
+}
+$("dlgFields").addEventListener("change", (e) => {
+  if (["date", "currency", "origAmount"].includes(e.target.name)) {
+    const rate = $("dlgFields").querySelector("[name=rate]");
+    if (rate) rate.value = "";
+    fillRate(editing);
+  }
+});
+
+// In the background, once per visit: every foreign-currency document still without a rate gets the
+// representative rate of its date, its shekel amount, and is checked again.
+let ratesTried = false;
+async function fillMissingRates() {
+  if (ratesTried) return;
+  const list = records.filter((r) => foreign(r) && !r.rate && r.date && r.origAmount != null);
+  if (!list.length) return;
+  ratesTried = true;
+  let n = 0;
+  for (const r of list) {
+    const rec = { ...r };
+    if (!(await convertCurrency(rec))) continue;
+    const upd = { rate: rec.rate, rateDate: rec.rateDate, amount: rec.amount, vat: rec.vat ?? null };
+    if (r.status === "review") {
+      const why = reviewReasons({ ...r, ...upd }, { exceptId: r.id });
+      Object.assign(upd, { status: why.length ? "review" : "ok", reviewWhy: why.join(" · ") });
+    }
+    try { await store.update(r.id, upd); n++; } catch { /* stays for the next visit */ }
+  }
+  if (n) toast(`💱 נשלף שער יציג ל-${n} מסמכים במטבע זר`);
 }
 
 // The documents in the list on show (the documents' list or the journal), to move between them in the window.
