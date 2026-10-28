@@ -431,6 +431,8 @@ const VAT_RE = new RegExp(`מע${Q}מ|\\bvat\\b|\\btax\\b`, "i");
 const TOTAL_KEYS = [
   [new RegExp(`סה${Q}כ\\s*לתשלום|סך\\s*הכל\\s*לתשלום|יתרה\\s*לתשלום|סכום\\s*לתשלום|total\\s*due|amount\\s*due|grand\\s*total|balance\\s*due`, "i"), 100],
   [new RegExp(`(?:סה${Q}כ|סך\\s*הכו?ל)\\s*(?:כולל|כ\\.)\\s*מע${Q}מ|total\\s*incl`, "i"), 90],
+  // "כולל מע"מ: 33.70" as a receipt's last line, often misread ("בוללמע''מ")
+  [/[כב]ולל\s*מע["״'׳]{0,2}מ\s*:/, 80],
   [/לתשלום|שולם|סכום\s*ששולם|total\s*paid|amount\s*paid/i, 75],
   [new RegExp(`סה${Q}כ|ס[ךד]\\s*הכו?ל|\\btotal\\b`, "i"), 55],
   [/סכום|קניה|\bamount\b|\bsum\b/i, 30],
@@ -465,6 +467,8 @@ function amountsIn(line) {
     .replace(/(?<!\d)\d{1,2}\s?[./-]\s?\d{1,2}\s?[./-]\s?\d{2,4}(?!\d)/g, " ")
     .replace(/(?<!\d)0\d{1,2}-?\d{3}-?\d{4}(?!\d)|(?<!\d)05\d-?\d{7}(?!\d)/g, " ")
     .replace(/\d+(?:\.\d+)?\s?%/g, " ")
+    // times of day and opening hours ("13:15:31", "07:00-14:00")
+    .replace(/(?<![\d.])\d{1,2}:\d{2}(?::\d{2})?(?![\d.])/g, " ")
     // a card's last digits ("Mastercard *5942", "כרטיס 1234") are not money
     .replace(/\*+\s?\d{2,}/g, " ")
     .replace(/(?:mastercard|visa|amex|diners|isracard|ויזה|מאסטרקארד|ישראכרט|אמריקן\s*אקספרס|דיינרס|כרטיס(?:\s*אשראי)?|card)\D{0,8}\d{4}(?!\d)/gi, " ");
@@ -479,7 +483,7 @@ function amountsIn(line) {
 }
 
 // "סה"כ כולל מע"מ 177" is the total; a bare "כולל מע"מ 27" is the VAT inside it.
-const GROSS_RE = new RegExp(`סה${Q}כ|סך\\s*הכו?ל|לתשלום|\\btotal\\b`, "i");
+const GROSS_RE = new RegExp(`סה${Q}כ|סך\\s*הכו?ל|לתשלום|[כב]ולל\\s*מע["״'׳]{0,2}מ\\s*:|\\btotal\\b`, "i");
 const isGrossLine = (line) => GROSS_RE.test(line);
 
 // "סה"כ 2 פריטים" counts items, it is not money.
@@ -541,6 +545,8 @@ function findDate(lines) {
 const ID_RE = new RegExp(`(?:ח${Q}\\.?\\s?פ|ע${Q}\\.?\\s?מ|עוסק\\s*מורשה|עוסק\\s*פטור|מס['׳]?\\s*עוסק|מספר\\s*עוסק|ת\\.?\\s?ז|vat\\s*(?:no|id|number)|company\\s*(?:no|id))\\D{0,14}(\\d{8,9})`, "i");
 const DOC_TYPES = [
   [/זיכוי|credit\s*note/i, "חשבונית זיכוי"],
+  // "קבלה/חשבונית מס" on a till receipt, the second word often misread ("חשב וכ ית-מם")
+  [/קבלה\s*[/\\]\s*חשב/, "חשבונית מס קבלה"],
   [new RegExp(`חשבונית\\s*מס\\s*[/\\\\-]?\\s*קבלה|tax\\s*invoice\\s*[/-]?\\s*receipt`, "i"), "חשבונית מס קבלה"],
   [/חשבונית\s*מס|tax\s*invoice/i, "חשבונית מס"],
   [/חשבון\s*עסקה|proforma/i, "חשבון עסקה"],
@@ -555,6 +561,8 @@ function findDocNo(text) {
     /מס(?:פר|['׳.])\s*(?:חשבונית|מסמך|קבלה|אסמכתא)\s*:?\s*([A-Z]{0,3}-?\d{3,12})/i,
     /(?:invoice|receipt|document)\s*(?:no\.?|number|#)\s*:?\s*([A-Z]{0,4}-?\d{3,12})/i,
     /אסמכתא\s*:?\s*(\d{3,12})/,
+    // "קבלה/חשבונית מס-מספר: 124135"
+    /(?:קבלה|חשב)[^\n]{0,25}?מספר\s*:?\s*(\d{3,12})/,
     // OCR often garbles the "מס׳" between the word and the number.
     /(?:חשבונית|קבלה|זיכוי|חשבון\s*עסקה)[^\d\n]{0,12}?(\d{3,12})(?![\d./])/,
   ];
@@ -607,6 +615,8 @@ function supplierOf(lines, text, hint) {
   return chain && !chain[1].test(found) ? chain[0] : found;
 }
 
+const LABEL_TAIL = /\s*(?:שעה|תאריך|קופה|קופאי|מס['׳]?\s*קופה|עמדה)\s*:.*$/;
+
 function findSupplier(lines) {
   // A company name usually ends with בע"מ / Ltd.
   const co = new RegExp(`([^:|]{2,50}?\\s*בע${Q}מ|[A-Za-z0-9 .&'-]{2,50}?\\b(?:Ltd|LTD|Inc|LLC|GmbH)\\.?)`);
@@ -623,8 +633,10 @@ function findSupplier(lines) {
     const m = line.match(/(?:שם\s*העסק|שם\s*הספק|ספק|מאת|from|vendor|seller)\s*:\s*(.{2,60})/i);
     if (m) return cleanName(m[1]);
   }
-  // Otherwise the first real words at the top of the page.
-  for (const line of lines.slice(0, 10)) {
+  // Otherwise the first real words at the top of the page, without what is printed beside them on a
+  // till receipt ("קיבוץ רעים שעה: 13:15:31", "תאריך: 29/06/25", "קופה: 2").
+  for (let line of lines.slice(0, 10)) {
+    line = line.replace(LABEL_TAIL, "").trim();
     const letters = line.replace(/[^\p{L}]/gu, "");
     if (letters.length < 3 || NOT_A_NAME.test(line)) continue;
     if (line.replace(/[^\d]/g, "").length > letters.length) continue;

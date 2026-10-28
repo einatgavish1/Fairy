@@ -1,8 +1,8 @@
 import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview } from "./extract.js?v=13";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview } from "./extract.js?v=14";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
-import { EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=5";
-import { fillFromPath } from "./recheck.js?v=4";
+import { EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=6";
+import { fillFromPath } from "./recheck.js?v=5";
 import { parseComparative, comparativeFromDocs, buildFiling, filingSheet, comparativeSheet, lineOf } from "./report.js?v=2";
 
 const $ = (id) => document.getElementById(id);
@@ -479,7 +479,17 @@ function reviewReasons(r, { exceptId, noText = false, failed = "", skip = [] } =
   if (!r.client) why.push(r.customer ? `הלקוח "${r.customer}" שבמסמך לא נמצא ברשימת הלקוחות` : "לא שויך ללקוח");
   const dup = findDuplicate(r, exceptId, skip);
   if (dup) why.push(`ייתכן כפילות (${dup.why}) של: ${dup.what}`);
+  if (r.supplier && odd(r.supplier)) why.push("שם הספק נראה משובש");
   return why;
+}
+
+// A supplier's name that is not a name: a time or a date in it, a long number, a label from the
+// receipt ("שעה:"), or more stray marks and single letters than words ("% ג ו יי אי אוא").
+function odd(name) {
+  if (/\d{1,2}:\d{2}|\d{1,2}[./]\d{1,2}[./]\d{2}|\d{5,}|(?:שעה|תאריך|קופה)\s*:/.test(name)) return true;
+  const words = name.split(/\s+/).filter(Boolean);
+  const real = words.filter((w) => w.replace(/[^\p{L}]/gu, "").length >= 2).length;
+  return real === 0 || words.length - real > real || /[%=\\|~^]/.test(name);
 }
 
 // ---------- intake ----------
