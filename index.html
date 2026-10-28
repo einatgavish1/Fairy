@@ -69,6 +69,7 @@
     <button data-view="upload" class="active">📥 קליטת מסמכים</button>
     <button data-view="docs">📋 מסמכים <span class="nav-badge" id="reviewBadge" hidden></span></button>
     <button data-view="journal">📒 פקודות יומן</button>
+    <button data-view="donations">💝 תרומות</button>
     <button data-view="filing">📄 דוח להגשה</button>
     <button data-view="summary">📊 סיכום</button>
     <div class="side-nav-foot">
@@ -232,6 +233,30 @@
     </div>
   </main>
 
+  <!-- Receipts for donations, apart from the expenses: they are not in the journal or the filing report. -->
+  <main class="panel view-panel" data-view="donations">
+    <div class="panel-head">
+      <h2>💝 תרומות <span class="page-client" id="pageClient6"></span></h2>
+      <div class="head-actions">
+        <select id="dYear" title="שנה"></select>
+        <button class="primary" id="dExport">ייצוא לאקסל</button>
+      </div>
+    </div>
+    <p class="hint">קבלות על תרומות מזוהות לבד ("קבלה על תרומה", "סעיף 46") ומוצגות כאן, ולא בפקודות היומן ובדוח להגשה. מסמך שסוג השירות שלו "תרומות" עובר לכאן; לחיצה על שורה פותחת את המסמך.</p>
+    <div class="cards">
+      <div class="card"><span>קבלות</span><b id="dCount">0</b></div>
+      <div class="card"><span>מהן עם אישור לסעיף 46</span><b id="d46">0</b></div>
+      <div class="card main"><span>סה״כ תרומות</span><b id="dSum">0</b></div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>תאריך</th><th>עמותה / מוסד</th><th>ח.פ / ע.ר</th><th>מספר קבלה</th><th>סעיף 46</th><th class="num">סכום</th></tr></thead>
+        <tbody id="dRows"></tbody>
+      </table>
+      <p class="empty" id="dEmpty" hidden>אין קבלות על תרומות בשנה הזו.</p>
+    </div>
+  </main>
+
   <!-- The filing report, built from the comparative report (imported from Excel or put together from the documents). -->
   <main class="panel view-panel" data-view="filing">
     <div class="panel-head">
@@ -362,6 +387,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=44"></script>
+<script type="module" src="app.js?v=45"></script>
 </body>
 </html>

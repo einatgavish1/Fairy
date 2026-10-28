@@ -403,6 +403,8 @@ function fixVisualOrder(rows) {
 // ---------- finding the details ----------
 
 export const CATEGORIES = [
+  // a receipt for a donation (to a public institution, often "לעניין סעיף 46") - kept apart from expenses
+  ["תרומות", /תרומה|תרומות|תרומתך|תרומתכם|סעיף\s*46|סעיף\s*46\s*א/],
   ["חשמל", /חברת\s*החשמל|צריכת\s*חשמל|חשבון\s*חשמל|electric/i],
   ["מים", /תאגיד\s*(?:ה)?מים|צריכת\s*מים|חשבון\s*מים|מקורות|מי\s+\S+\s+בע|(?:^|\s)מים(?:\s|$)|מי\s*אביבים|הגיחון|מי\s*רעננה|מי\s*שבע|מי\s*כרמל|מי\s*מודיעין/],
   ["ארנונה", /ארנונה|עיריית|עירית|מועצה\s*(?:מקומית|אזורית)/],
@@ -664,6 +666,9 @@ export function findCurrency(text) {
   return sure ? sure[0] : "";
 }
 
+// A receipt for a donation: the word, or the tax-credit section it is given under.
+export const isDonation = (text) => /קבלה\s*(?:על|עבור|בגין)?\s*תרומה|תרומה\s*(?:מס['׳]?|מספר|ע["״]ס)|תרומתך|תרומתכם|סעיף\s*46|לעניין\s*סעיף|מוכר\s*לצורכי\s*זיכוי|זיכוי\s*ממס/.test(text);
+
 export function findCategory(text, supplier) {
   let best = null;
   for (const [name, re] of CATEGORIES) {
@@ -723,8 +728,9 @@ function parseOne(text, hint = "") {
     supplierId: text.match(ID_RE)?.[1] || text.match(/(?<![\d-])(5\d)-(\d{6})-(\d)(?![\d-])/)?.slice(1).join("") || "",
     docType,
     docNo: findDocNo(text),
-    category: findCategory(text, supplier) || findCategory(hint, supplier),
+    category: isDonation(text) ? "תרומות" : findCategory(text, supplier) || findCategory(hint, supplier),
     details: findDetails(lines),
     currency: findCurrency(text),
+    donation: isDonation(text),
   };
 }

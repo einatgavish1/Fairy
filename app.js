@@ -1,8 +1,8 @@
 import { firebaseConfig, OWNER_EMAILS, AI_READING } from "./firebase-config.js?v=2";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview } from "./extract.js?v=15";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview } from "./extract.js?v=16";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
 import { EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=6";
-import { fillFromPath } from "./recheck.js?v=6";
+import { fillFromPath } from "./recheck.js?v=7";
 import { parseComparative, comparativeFromDocs, buildFiling, filingSheet, comparativeSheet, lineOf } from "./report.js?v=3";
 
 const $ = (id) => document.getElementById(id);
@@ -365,7 +365,7 @@ function chooseClient(name) {
   try { localStorage.setItem("fairy-last-client", name); } catch {}
   const all = name === ALL;
   const title = all ? "" : `· ${name || "לא שויכו ללקוח"}`;
-  for (const id of ["pageClient", "pageClient2", "pageClient3", "pageClient4", "pageClient5"]) $(id).textContent = title;
+  for (const id of ["pageClient", "pageClient2", "pageClient3", "pageClient4", "pageClient5", "pageClient6"]) $(id).textContent = title;
   loadFiling();
   $("clientPick").hidden = !all;
   $("clientFixed").hidden = all;
@@ -898,7 +898,7 @@ async function processFile(file, path, batch) {
   let found = failed ? {} : parseText(text, hint, alt);
   // Claude reads the picture; what it finds wins over the local reading, which stays when it fails.
   const ai = preview ? await aiReading(preview, path, (label) => status(0.95, label)) : null;
-  if (ai) found = { ...found, ...ai.fields };
+  if (ai) found = { ...found, ...ai.fields, category: found.donation ? "תרומות" : ai.fields.category ?? found.category };
   let rec = {
     client: clientFor(found.customer), customer: found.customer || "",
     date: found.date || "", supplier: found.supplier || "", supplierId: found.supplierId || "",
@@ -1068,6 +1068,7 @@ function renderAll() {
   renderTable();
   renderSummary();
   renderJournal();
+  renderDonations();
 }
 
 // id -> why it looks like another saved record. Recomputed whenever the records change.
@@ -1787,7 +1788,7 @@ const balanceDate = (iso, year) => (iso && year && iso < `${year}-01-01` ? `${ye
 const VAT_ACCOUNT = "205002";
 function yearLines() {
   const year = $("jYear").value;
-  return records.filter((r) => inScope(r) && (!year || (r.date || "").startsWith(year)))
+  return records.filter((r) => inScope(r) && !isDonationDoc(r) && (!year || (r.date || "").startsWith(year)))
     .sort((a, b) => (a.date || "").localeCompare(b.date || ""))
     .flatMap((r) => {
       const line = {
@@ -1981,6 +1982,61 @@ $("jExport").onclick = () => {
   XLSX.writeFile(wb, `פקודות יומן ${who}${$("jYear").value || "כל השנים"}.xlsx`);
 };
 
+// ---------- donations (תרומות) ----------
+// Receipts for donations are not expenses: they are listed here, apart, and left out of the journal and
+// the filing report. A document is a donation by its service type "תרומות" (set when the reading finds
+// "קבלה על תרומה", "סעיף 46" and the like, or chosen by hand).
+const isDonationDoc = (r) => r.category === "תרומות";
+// The receipt says the institution is approved for the tax credit of section 46.
+const section46 = (r) => /סעיף\s*46|לעניין\s*סעיף|מוכר\s*לצורכי\s*זיכוי|זיכוי\s*ממס/.test(r.text || "");
+
+function donationLines() {
+  const year = $("dYear").value;
+  return records.filter((r) => inScope(r) && isDonationDoc(r) && (!year || (r.date || "").startsWith(year)))
+    .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+}
+function renderDonations() {
+  const all = records.filter((r) => inScope(r) && isDonationDoc(r));
+  const years = [...new Set(all.map((r) => (r.date || "").slice(0, 4)).filter(Boolean))].sort().reverse();
+  const cur = $("dYear").value;
+  $("dYear").innerHTML = '<option value="">כל השנים</option>' + years.map((y) => `<option>${esc(y)}</option>`).join("");
+  $("dYear").value = years.includes(cur) ? cur : (years[0] || "");
+  const rows = donationLines();
+  $("dRows").innerHTML = rows.map((r) => `<tr data-id="${esc(r.id)}" class="${needsReview(r) ? "dup" : ""}">
+      <td class="num">${showDate(r.date)}</td>
+      <td>${needsReview(r) ? '<span title="מסמך לבדיקה">⚠️</span> ' : ""}${esc(r.supplier) || `<span class="soon">${esc(r.fileName)}</span>`}</td>
+      <td class="num">${esc(r.supplierId)}</td><td class="num">${esc(r.docNo)}</td>
+      <td>${section46(r) ? '<span class="tag">✓ סעיף 46</span>' : ""}</td>
+      <td class="num">${r.amount ? fmt(r.amount) : ""}</td></tr>`).join("");
+  $("dCount").textContent = rows.length;
+  $("d46").textContent = rows.filter(section46).length;
+  $("dSum").textContent = fmt(round2(rows.reduce((t, r) => t + (r.amount || 0), 0)));
+  $("dEmpty").hidden = rows.length > 0;
+}
+$("dYear").addEventListener("input", renderDonations);
+$("dRows").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) openEntry(tr.dataset.id); });
+$("dExport").onclick = () => {
+  const rows = donationLines();
+  if (!rows.length) { toast("אין מה לייצא"); return; }
+  const toDate = (iso) => (iso ? (Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) - Date.UTC(1899, 11, 30)) / 864e5 : "");
+  const aoa = [["תאריך", "עמותה / מוסד", "ח.פ / ע.ר", "מספר קבלה", "סעיף 46", "סכום"],
+    ...rows.map((r) => [toDate(r.date), r.supplier || "", r.supplierId || "", r.docNo || "", section46(r) ? "כן" : "", r.amount || 0])];
+  aoa.push(["", "סה״כ", "", "", "", round2(rows.reduce((t, r) => t + (r.amount || 0), 0))]);
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  for (let i = 1; i < aoa.length; i++) {
+    const d = ws[XLSX.utils.encode_cell({ r: i, c: 0 })];
+    if (d && d.t === "n") d.z = 'dd"/"mm"/"yy';
+    const n = ws[XLSX.utils.encode_cell({ r: i, c: 5 })];
+    if (n && n.t === "n") n.z = "#,##0.00";
+  }
+  ws["!cols"] = [10, 30, 12, 12, 9, 12].map((wch) => ({ wch }));
+  const wb = XLSX.utils.book_new();
+  wb.Workbook = { Views: [{ RTL: true }] };
+  XLSX.utils.book_append_sheet(wb, ws, "תרומות");
+  const who = client && client !== ALL ? `${client} ` : "";
+  XLSX.writeFile(wb, `תרומות ${who}${$("dYear").value || "כל השנים"}.xlsx`);
+};
+
 // ---------- filing report (דוח להגשה) ----------
 // For one client and tax year: the comparative report (imported from the bookkeeping software's Excel,
 // or put together from the documents here), and the filing report it adds up to. Saved per client and
@@ -2118,7 +2174,7 @@ $("fFromDocs").onclick = async () => {
   if (filing.lines.length && filing.source === "file"
       && !confirm("לשנה הזו כבר יש דוח השוואתי מקובץ. להחליף אותו בחישוב מהמסמכים במערכת?")) return;
   const net = (r) => (dealerOf(r.client, r.date) === "licensed" && r.vat && r.vat < (r.amount || 0) ? r.amount - r.vat : r.amount || 0);
-  const lines = comparativeFromDocs(records.filter(inScope), +filing.year, accountOf, accountName, net);
+  const lines = comparativeFromDocs(records.filter((r) => inScope(r) && !isDonationDoc(r)), +filing.year, accountOf, accountName, net);
   if (!lines.length) { toast(`אין מסמכים לשנת ${filing.year}`); return; }
   filing = { ...filing, source: "docs", fileName: "", lines };
   await saveFiling(`חושב מ-${lines.length} חשבונות של המסמכים`);
