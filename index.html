@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=26">
+<link rel="stylesheet" href="style.css?v=27">
 </head>
 <body>
 
@@ -187,10 +187,11 @@
     <div class="panel-head">
       <h2>📒 פקודות יומן <span class="page-client" id="pageClient4"></span></h2>
       <div class="head-actions">
-        <select id="jDealer" title="סוג העוסק: בעוסק מורשה המע״מ נרשם בנפרד לחשבון מע״מ תשומות" hidden>
-          <option value="exempt">עוסק פטור</option>
-          <option value="licensed">עוסק מורשה</option>
-        </select>
+        <!-- the client's dealer type, set when the client is added; changed only on purpose, and on record -->
+        <span class="dealer-tag" id="jDealer" hidden>
+          <b id="jDealerName"></b>
+          <button type="button" class="link" id="jDealerChange" title="שינוי סוג העוסק והיסטוריית השינויים">שינוי…</button>
+        </span>
         <select id="jYear" title="שנה"></select>
         <button class="primary" id="jExport">ייצוא לאקסל</button>
       </div>
@@ -324,6 +325,24 @@
   </div>
 </dialog>
 
+<!-- Changing a client's dealer type: from a date, with the history of every change. -->
+<dialog id="dealerDlg">
+  <form method="dialog">
+    <h2>סוג העוסק · <span id="dealerClient"></span></h2>
+    <p>כרגע: <b id="dealerNow"></b></p>
+    <p class="hint">שינוי חל על מסמכים מתאריך התחילה והלאה; מסמכים מלפניו נשארים לפי הסוג הקודם. כל שינוי נשמר בהיסטוריה.</p>
+    <div class="row">
+      <label>לשנות ל <b id="dealerTo"></b> החל מ-<input type="date" id="dealerFrom"></label>
+    </div>
+    <h3 class="dealer-log-title">היסטוריית שינויים</h3>
+    <ul id="dealerLog" class="dealer-log"></ul>
+    <div class="actions"><span class="grow"></span>
+      <button class="ghost" value="cancel">סגירה</button>
+      <button type="button" class="primary" id="dealerSave">שמירת השינוי</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="shareDlg">
   <form method="dialog">
     <h2>שיתוף</h2>
@@ -342,6 +361,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=37"></script>
+<script type="module" src="app.js?v=38"></script>
 </body>
 </html>

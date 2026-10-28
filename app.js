@@ -59,11 +59,17 @@ if (CLOUD) {
       try { return (await fs.getDoc(fs.doc(db, "access", email.toLowerCase()))).exists(); } catch { return false; }
     },
     watchClients: (cb, onErr) => fs.onSnapshot(fs.collection(db, "clients"), (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onErr),
-    addClient: (name, dealer) => fs.addDoc(fs.collection(db, "clients"), { name, dealer, createdAt: fs.serverTimestamp(), createdBy: auth.currentUser.email }),
-    async setDealer(name, dealer) {
+    // dealerLog: every setting of the client's dealer type, { dealer, from (YYYY-MM-DD, "" = from the start), at, by }
+    addClient: (name, dealer) => fs.addDoc(fs.collection(db, "clients"), { name, dealer,
+      dealerLog: [{ dealer, from: "", at: Date.now(), by: auth.currentUser.email }],
+      createdAt: fs.serverTimestamp(), createdBy: auth.currentUser.email }),
+    async setDealer(name, dealer, from, log) {
+      const entry = { dealer, from, at: Date.now(), by: auth.currentUser.email };
       const snap = await fs.getDocs(fs.query(fs.collection(db, "clients"), fs.where("name", "==", name)));
-      if (snap.empty) await fs.addDoc(fs.collection(db, "clients"), { name, dealer, createdAt: fs.serverTimestamp(), createdBy: auth.currentUser.email });
-      for (const d of snap.docs) await fs.updateDoc(d.ref, { dealer });
+      if (snap.empty) {
+        await fs.addDoc(fs.collection(db, "clients"), { name, dealer, dealerLog: [...log, entry], createdAt: fs.serverTimestamp(), createdBy: auth.currentUser.email });
+      }
+      for (const d of snap.docs) await fs.updateDoc(d.ref, { dealer, dealerLog: [...log, entry] });
     },
     async removeClient(name) {
       const snap = await fs.getDocs(fs.query(fs.collection(db, "clients"), fs.where("name", "==", name)));
@@ -95,13 +101,15 @@ if (CLOUD) {
     async savePreview(id, dataUrl) { localStorage.setItem(PKEY + id, dataUrl); },
     watchClients(cb) { const f = () => cb(readJson(CKEY)); clientListeners.add(f); f(); return () => clientListeners.delete(f); },
     async addClient(name, dealer) {
-      localStorage.setItem(CKEY, JSON.stringify([...readJson(CKEY), { id: Date.now().toString(36), name, dealer }]));
+      const dealerLog = [{ dealer, from: "", at: Date.now(), by: "" }];
+      localStorage.setItem(CKEY, JSON.stringify([...readJson(CKEY), { id: Date.now().toString(36), name, dealer, dealerLog }]));
       clientListeners.forEach((f) => f());
     },
-    async setDealer(name, dealer) {
+    async setDealer(name, dealer, from, log) {
       const all = readJson(CKEY);
       if (!all.some((c) => c.name === name)) all.push({ id: Date.now().toString(36), name });
-      localStorage.setItem(CKEY, JSON.stringify(all.map((c) => (c.name === name ? { ...c, dealer } : c))));
+      const dealerLog = [...log, { dealer, from, at: Date.now(), by: "" }];
+      localStorage.setItem(CKEY, JSON.stringify(all.map((c) => (c.name === name ? { ...c, dealer, dealerLog } : c))));
       clientListeners.forEach((f) => f());
     },
     async removeClient(name) {
@@ -290,7 +298,19 @@ $("navClient").onchange = () => chooseClient($("navClient").value);
 
 // An exempt dealer (עוסק פטור) records each expense with its VAT; a licensed one (עוסק מורשה) claims the
 // VAT back, so the journal puts it apart on the input-VAT account.
-const dealerOf = (name) => clients.find((c) => c.name === name)?.dealer || "exempt";
+// A client's type can change from a date on (a growing business becomes licensed); every change is kept in
+// dealerLog, and a document goes by the type its own date falls under.
+function dealerLog(name) {
+  const c = clients.find((x) => x.name === name);
+  const log = Array.isArray(c?.dealerLog) && c.dealerLog.length ? c.dealerLog : [{ dealer: c?.dealer || "exempt", from: "", at: 0, by: "" }];
+  return [...log].sort((a, b) => a.from.localeCompare(b.from) || a.at - b.at);
+}
+function dealerOf(name, date = new Date().toISOString().slice(0, 10)) {
+  let dealer = "exempt";
+  for (const e of dealerLog(name)) if (!e.from || !date || e.from <= date) dealer = e.dealer;
+  return dealer;
+}
+const DEALER_NAMES = { exempt: "עוסק פטור", licensed: "עוסק מורשה" };
 
 async function addClient(name, dealer = "exempt") {
   name = name.trim().replace(/\s+/g, " ");
@@ -1633,7 +1653,7 @@ function yearLines() {
         debit: accountOf(r), credit: OWNER_ACCOUNT, amount: r.amount || 0, ref: r.docNo || "",
       };
       const vat = r.vat || 0;
-      if (dealerOf(r.client) !== "licensed" || !vat || vat >= line.amount) return [line];
+      if (dealerOf(r.client, r.date) !== "licensed" || !vat || vat >= line.amount) return [line];
       return [{ ...line, amount: round2(line.amount - vat) }, { ...line, debit: VAT_ACCOUNT, amount: vat, vatLine: true }];
     });
 }
@@ -1731,18 +1751,33 @@ function renderJournal() {
   // The client's dealer type, beside the year.
   const one = client && client !== ALL;
   $("jDealer").hidden = !one;
-  if (one) $("jDealer").value = dealerOf(client);
+  if (one) $("jDealerName").textContent = DEALER_NAMES[dealerOf(client)];
+  $("jDealerChange").hidden = !OWNER_EMAILS.includes(user?.email) && CLOUD;
 }
 // Another year starts from the full list: the filters are cleared.
 $("jYear").addEventListener("input", () => { J_FILTERS.forEach((id) => { $(id).value = ""; }); renderJournal(); });
 J_FILTERS.forEach((id) => $(id).addEventListener("input", renderJournal));
 $("jClear").onclick = () => { J_FILTERS.forEach((id) => { $(id).value = ""; }); renderJournal(); };
-$("jDealer").onchange = async () => {
-  const dealer = $("jDealer").value;
-  try {
-    await store.setDealer(client, dealer);
-    toast(dealer === "licensed" ? `${client}: עוסק מורשה. המע״מ נרשם בנפרד לחשבון מע״מ תשומות` : `${client}: עוסק פטור. ההוצאה נרשמת כולל מע״מ`);
-  } catch (err) { toast("השמירה נכשלה: " + err.message); renderJournal(); }
+// Changing the type: only the owners, from a date, and on record.
+$("jDealerChange").onclick = () => {
+  if (!client || client === ALL) return;
+  const now = dealerOf(client), to = now === "licensed" ? "exempt" : "licensed";
+  $("dealerClient").textContent = client;
+  $("dealerNow").textContent = DEALER_NAMES[now];
+  $("dealerTo").textContent = DEALER_NAMES[to];
+  $("dealerFrom").value = new Date().toISOString().slice(0, 10);
+  $("dealerLog").innerHTML = dealerLog(client).map((e) => `<li><b>${DEALER_NAMES[e.dealer] || esc(e.dealer)}</b> ${e.from ? `מ-${showDate(e.from)}` : "מההתחלה"}${e.at ? ` · נקבע ${new Date(e.at).toLocaleDateString("he-IL")}` : ""}${e.by ? ` · ${esc(e.by)}` : ""}</li>`).join("");
+  $("dealerSave").onclick = async () => {
+    const from = $("dealerFrom").value;
+    if (!from) { toast("בחרו מאיזה תאריך השינוי חל"); return; }
+    if (!confirm(`לשנות את ${client} ל${DEALER_NAMES[to]} החל מ-${showDate(from)}?`)) return;
+    try {
+      await store.setDealer(client, to, from, dealerLog(client));
+      $("dealerDlg").close();
+      toast(`${client}: ${DEALER_NAMES[to]} החל מ-${showDate(from)}. השינוי נשמר בהיסטוריה`);
+    } catch (err) { toast("השמירה נכשלה: " + err.message); }
+  };
+  $("dealerDlg").showModal();
 };
 
 // Clicking the account turns it into a list of the expense accounts; picking one saves it on the document.
@@ -1938,7 +1973,7 @@ $("fFromDocs").onclick = async () => {
   if (!filing) return;
   if (filing.lines.length && filing.source === "file"
       && !confirm("לשנה הזו כבר יש דוח השוואתי מקובץ. להחליף אותו בחישוב מהמסמכים במערכת?")) return;
-  const net = (r) => (dealerOf(r.client) === "licensed" && r.vat && r.vat < (r.amount || 0) ? r.amount - r.vat : r.amount || 0);
+  const net = (r) => (dealerOf(r.client, r.date) === "licensed" && r.vat && r.vat < (r.amount || 0) ? r.amount - r.vat : r.amount || 0);
   const lines = comparativeFromDocs(records.filter(inScope), +filing.year, accountOf, accountName, net);
   if (!lines.length) { toast(`אין מסמכים לשנת ${filing.year}`); return; }
   filing = { ...filing, source: "docs", fileName: "", lines };

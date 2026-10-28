@@ -442,3 +442,9 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .sup-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: rgba(255, 255, 255, .06); cursor: pointer; }
 .sup-row span { flex: 1; }
 .sup-row small { color: var(--muted); white-space: nowrap; }
+/* the client's dealer type beside the year, and its history */
+.dealer-tag { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--glass-line); background: rgba(255, 255, 255, .08); }
+.dealer-tag .link { font-size: 13px; }
+.dealer-log-title { margin: 14px 0 6px; font-size: 15px; }
+.dealer-log { margin: 0; padding-inline-start: 18px; font-size: 14px; color: var(--muted); max-height: 30vh; overflow-y: auto; }
+.dealer-log li { margin-bottom: 4px; }

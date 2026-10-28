@@ -53,15 +53,20 @@ service cloud.firestore {
     // The client list, so a new client is there before their first document.
     match /clients/{id} {
       allow read: if allowed();
-      // dealer: an exempt dealer (עוסק פטור) or a licensed one (עוסק מורשה); only the owners change it.
+      // dealer: an exempt dealer (עוסק פטור) or a licensed one (עוסק מורשה), set when the client is added;
+      // dealerLog keeps every change (from which date, when, by whom). Only the owners change it.
       allow create: if allowed()
-                    && request.resource.data.keys().hasOnly(['name', 'dealer', 'createdAt', 'createdBy'])
+                    && request.resource.data.keys().hasOnly(['name', 'dealer', 'dealerLog', 'createdAt', 'createdBy'])
                     && request.resource.data.name is string
                     && request.resource.data.name.size() > 0 && request.resource.data.name.size() < 100
-                    && (!('dealer' in request.resource.data) || request.resource.data.dealer in ['exempt', 'licensed']);
+                    && (!('dealer' in request.resource.data) || request.resource.data.dealer in ['exempt', 'licensed'])
+                    && (!('dealerLog' in request.resource.data) || (request.resource.data.dealerLog is list && request.resource.data.dealerLog.size() < 50));
       allow update: if isOwner()
-                    && request.resource.data.keys().hasOnly(['name', 'dealer', 'createdAt', 'createdBy'])
-                    && (!('dealer' in request.resource.data) || request.resource.data.dealer in ['exempt', 'licensed']);
+                    && request.resource.data.keys().hasOnly(['name', 'dealer', 'dealerLog', 'createdAt', 'createdBy'])
+                    && (!('dealer' in request.resource.data) || request.resource.data.dealer in ['exempt', 'licensed'])
+                    && (!('dealerLog' in request.resource.data) || (request.resource.data.dealerLog is list && request.resource.data.dealerLog.size() < 50))
+                    // the history only grows: a change is added to it, never taken out
+                    && (!('dealerLog' in resource.data) || ('dealerLog' in request.resource.data && request.resource.data.dealerLog.size() >= resource.data.dealerLog.size()));
       allow delete: if isOwner();
     }
 
