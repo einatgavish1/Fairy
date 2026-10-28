@@ -1043,6 +1043,9 @@ function fillSelect(sel, values, allLabel) {
   sel.value = values.includes(cur) ? cur : "";
 }
 
+let reviewSeen = 0; // how many documents waited for review when the note was last answered
+const answerReview = () => { reviewSeen = records.filter((r) => inScope(r) && needsReview(r)).length; $("reviewNote").classList.remove("blink"); };
+
 function renderAll() {
   markDuplicates();
   if (records.length) fillMissingRates();
@@ -1062,6 +1065,9 @@ function renderAll() {
   $("reviewNote").hidden = !review;
   if (!rereading) $("rereadAll").hidden = !review;
   $("reviewCount").textContent = review;
+  // It blinks until it is answered (ticked, or a document opened from the list); more documents waiting
+  // than when it was last answered make it blink again.
+  $("reviewNote").classList.toggle("blink", review > reviewSeen && !$("reviewOnly").checked);
   $("reviewBadge").hidden = !review;
   $("reviewBadge").textContent = review;
   if (!review) $("reviewOnly").checked = false;
@@ -1139,7 +1145,9 @@ function renderTable() {
 
 // One click handler for the whole list: the tick box marks, the bin deletes, anywhere else shows the
 // document in the side panel (on a phone, where there is no room beside the list, it opens it).
+$("reviewNote").addEventListener("click", answerReview);
 $("rows").addEventListener("click", (e) => {
+  if (e.target.closest("tr")) answerReview();
   const tr = e.target.closest("tr");
   if (!tr) return;
   const del = e.target.closest("[data-del]");

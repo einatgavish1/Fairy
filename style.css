@@ -454,3 +454,8 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .fx-note { margin: 0 0 12px; padding: 8px 12px; border-radius: 10px; background: rgba(120, 200, 255, .12); border: 1px solid rgba(120, 200, 255, .5); font-size: 14px; }
 .fx-note a { color: var(--accent); }
 .tag.fx { border-color: rgba(120, 200, 255, .7); color: #bfe6ff; }
+/* the documents-for-review note blinks until it is answered */
+@keyframes review-blink { 0%, 100% { background: rgba(255, 155, 147, .16); box-shadow: 0 0 0 0 rgba(255, 196, 0, 0); }
+  50% { background: rgba(255, 196, 0, .38); box-shadow: 0 0 0 4px rgba(255, 196, 0, .35); } }
+.dup-note.blink { animation: review-blink 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .dup-note.blink { animation-duration: 3s; } }
