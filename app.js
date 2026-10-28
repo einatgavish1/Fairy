@@ -16,8 +16,10 @@ function toast(msg) {
   const t = $("toast");
   t.textContent = msg;
   t.hidden = false;
+  // in the top layer, so it shows above a window that is open (the document's full-screen window)
+  try { if (t.showPopover) { if (t.matches(":popover-open")) t.hidePopover(); t.showPopover(); } } catch { /* shown as is */ }
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => (t.hidden = true), 3500);
+  toast.timer = setTimeout(() => { t.hidden = true; try { t.hidePopover?.(); } catch { /* already hidden */ } }, 3500);
 }
 
 // ---------- storage: Firestore when configured, this browser otherwise ----------
@@ -2282,6 +2284,7 @@ async function driveGet(path, params) {
   if (!token) throw new Error("אין חיבור לדרייב");
   const res = await fetch(`https://www.googleapis.com/drive/v3/${path}?${new URLSearchParams(params)}`, { headers: { Authorization: `Bearer ${token}` } });
   if (res.status === 401) { driveAuth = null; throw new Error("החיבור לדרייב פג, התחברו שוב"); }
+  if (res.status === 403) throw new Error("הגישה לדרייב לא הופעלה בפרויקט (Google Drive API)");
   if (!res.ok) throw new Error(`הדרייב ענה ${res.status}`);
   return res.json();
 }
@@ -2351,7 +2354,9 @@ async function showWholeFile(r) {
   if (!id) {
     if (!store.driveToken) { toast("החיבור לדרייב עובד רק באתר עצמו"); return; }
     try {
-      if (!(await driveToken())) return;
+      toast("מתחבר לדרייב… אם נפתח חלון של Google, אשרו בו");
+      if (!(await driveToken())) { toast("לא התקבל אישור לגשת לדרייב"); return; }
+      toast("מחפש את הקובץ בדרייב…");
       id = await findInDrive(r.fileName);
     } catch (e) { toast("החיבור לדרייב נכשל: " + e.message); return; }
     if (!id) { toast(`הקובץ "${(r.fileName || "").split("/").pop()}" לא נמצא בדרייב`); return; }

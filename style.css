@@ -305,7 +305,7 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 #shareList { list-style: none; padding: 0; }
 #shareList li { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
 
-#toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #fff; color: #1e3c72;
+#toast { position: fixed; inset: auto; margin: 0; border: 0; bottom: 20px; left: 50%; transform: translateX(-50%); background: #fff; color: #1e3c72;
   padding: 10px 18px; border-radius: 10px; z-index: 30; font-weight: 500; }
 
 /* ---- sign-in: the photo, warmed to the logo's colours, beside a light card with the logo ---- */
