@@ -469,12 +469,20 @@ const FIELDS = [
   { k: "origAmount", label: "סכום במטבע המקורי", type: "number" },
   { k: "rate", label: "שער יציג", type: "number", exact: true },
   { k: "account", label: "חשבון חובה (פקודות יומן)", options: () => EXPENSE_ACCOUNTS.map(([c, n]) => [c, `${c} · ${n}`]) },
+  // electricity, water, municipal tax, gas: the bill as paid, and the part of it recognised as the expense
+  { k: "paid", label: "סכום ששולם (₪)", type: "number", home: true },
+  { k: "pct", label: "אחוז הנחה (%)", type: "number", exact: true, step: 1, min: 0, max: 100, home: true },
   { k: "details", label: "פירוט", wide: true },
 ];
 
+// The home's bills: only part of what was paid is the business's expense.
+const HOME_ACCOUNTS = ["613003", "613004", "613005", "613006"];
+const HOME_PCT = 25;
+const isHome = (account) => HOME_ACCOUNTS.includes(account);
+
 function fieldsHtml(v) {
   return FIELDS.map((f) => {
-    const val = v[f.k] ?? "";
+    const val = f.k === "pct" && isHome(v.account) && v.pct == null ? HOME_PCT : v[f.k] ?? "";
     let input;
     if (f.options) {
       // An option is a value, or [value, what is shown].
@@ -482,14 +490,23 @@ function fieldsHtml(v) {
       const all = val && !list.some(([o]) => o === val) ? [[val, val], ...list] : list;
       input = `<select name="${f.k}"><option value=""></option>${all.map(([o, t]) => `<option value="${esc(o)}"${o === val ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
     } else {
-      input = `<input name="${f.k}" type="${f.type || "text"}" value="${esc(val)}"${f.list ? ` list="${f.list}" autocomplete="off"` : ""}${f.type === "number" ? ` step="${f.exact ? "any" : "0.01"}" inputmode="decimal" dir="ltr"` : ""}>`;
+      input = `<input name="${f.k}" type="${f.type || "text"}" value="${esc(val)}"${f.list ? ` list="${f.list}" autocomplete="off"` : ""}${f.type === "number" ? ` step="${f.step || (f.exact ? "any" : "0.01")}" inputmode="decimal" dir="ltr"` : ""}${f.min != null ? ` min="${f.min}" max="${f.max}"` : ""}>`;
     }
-    return `<label class="${f.wide ? "wide " : ""}${f.need && (val === "" || val == null) ? "miss" : ""}" data-need="${f.need ? 1 : ""}">${f.label}${input}</label>`;
+    return `<label class="${f.wide ? "wide " : ""}${f.need && (val === "" || val == null) ? "miss" : ""}" data-need="${f.need ? 1 : ""}"${f.home ? ` data-home="1"${isHome(v.account) ? "" : " hidden"}` : ""}>${f.label}${input}</label>`;
   }).join("") + '<span class="calc"></span>';
 }
 
 function bindFields(box) {
-  const update = () => {
+  const update = (e) => {
+    // a home bill: the fields of what was paid and its percentage, and the expense worked out from them
+    const home = isHome(box.querySelector("[name=account]").value);
+    box.querySelectorAll("label[data-home='1']").forEach((l) => (l.hidden = !home));
+    const pct = box.querySelector("[name=pct]");
+    if (home && pct.value === "") pct.value = HOME_PCT;
+    if (home && ["paid", "pct", "account"].includes(e?.target.name)) {
+      const paid = parseFloat(box.querySelector("[name=paid]").value);
+      if (!isNaN(paid)) box.querySelector("[name=amount]").value = round2(paid * (parseFloat(pct.value) || 0) / 100);
+    }
     box.querySelectorAll("label[data-need='1']").forEach((l) => l.classList.toggle("miss", !l.querySelector("input,select").value));
     const r = readFields(box);
     box.querySelector(".calc").textContent = r.amount ? `לפני מע״מ: ${fmt(net(r))}` : "";
@@ -504,6 +521,7 @@ function readFields(box) {
     const v = box.querySelector(`[name=${f.k}]`).value.trim();
     out[f.k] = f.type === "number" ? (v === "" ? null : f.exact ? parseFloat(v) : round2(parseFloat(v))) : v;
   }
+  if (!isHome(out.account)) out.paid = out.pct = null;
   return out;
 }
 
