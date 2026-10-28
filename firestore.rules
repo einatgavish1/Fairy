@@ -53,11 +53,16 @@ service cloud.firestore {
     // The client list, so a new client is there before their first document.
     match /clients/{id} {
       allow read: if allowed();
+      // dealer: an exempt dealer (עוסק פטור) or a licensed one (עוסק מורשה); only the owners change it.
       allow create: if allowed()
-                    && request.resource.data.keys().hasOnly(['name', 'createdAt', 'createdBy'])
+                    && request.resource.data.keys().hasOnly(['name', 'dealer', 'createdAt', 'createdBy'])
                     && request.resource.data.name is string
-                    && request.resource.data.name.size() > 0 && request.resource.data.name.size() < 100;
-      allow update, delete: if isOwner();
+                    && request.resource.data.name.size() > 0 && request.resource.data.name.size() < 100
+                    && (!('dealer' in request.resource.data) || request.resource.data.dealer in ['exempt', 'licensed']);
+      allow update: if isOwner()
+                    && request.resource.data.keys().hasOnly(['name', 'dealer', 'createdAt', 'createdBy'])
+                    && (!('dealer' in request.resource.data) || request.resource.data.dealer in ['exempt', 'licensed']);
+      allow delete: if isOwner();
     }
 
     // A client's filing report for one tax year: the comparative report's lines and the details around them.

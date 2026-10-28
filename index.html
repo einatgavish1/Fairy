@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=24">
+<link rel="stylesheet" href="style.css?v=26">
 </head>
 <body>
 
@@ -52,6 +52,10 @@
 
       <form class="row new-client" id="newClientForm">
         <input id="newClientName" placeholder="שם לקוח חדש" autocomplete="off">
+        <select id="newClientDealer" title="סוג העוסק">
+          <option value="exempt">עוסק פטור</option>
+          <option value="licensed">עוסק מורשה</option>
+        </select>
         <button class="ghost">+ הוספת לקוח</button>
       </form>
     </div>
@@ -183,6 +187,10 @@
     <div class="panel-head">
       <h2>📒 פקודות יומן <span class="page-client" id="pageClient4"></span></h2>
       <div class="head-actions">
+        <select id="jDealer" title="סוג העוסק: בעוסק מורשה המע״מ נרשם בנפרד לחשבון מע״מ תשומות" hidden>
+          <option value="exempt">עוסק פטור</option>
+          <option value="licensed">עוסק מורשה</option>
+        </select>
         <select id="jYear" title="שנה"></select>
         <button class="primary" id="jExport">ייצוא לאקסל</button>
       </div>
@@ -206,17 +214,16 @@
     </div>
     <div class="tablewrap">
       <table class="journal">
-        <thead><tr><th></th><th></th><th></th><th></th><th>ספק / פרטים (מוגבל ל 24 תווים)</th><th>חובה</th><th>זכות</th><th class="num">סכום</th><th>אסמכתא</th><th>תאור חשבון חובה</th></tr>
-          <!-- a filter under each column: the lines whose cell holds what is typed -->
-          <tr class="col-filters">
-            <th><input id="jfDate" placeholder="תאריך" title="סינון לפי תאריך, למשל 01/25"></th><th></th><th></th><th></th>
-            <th><input id="jfDetails" placeholder="סינון" title="סינון לפי ספק / פרטים"></th>
-            <th><input id="jfDebit" placeholder="סינון" title="סינון לפי חשבון חובה" inputmode="numeric"></th>
-            <th><input id="jfCredit" placeholder="סינון" title="סינון לפי חשבון זכות" inputmode="numeric"></th>
-            <th><input id="jfAmount" placeholder="סינון" title="סכום: מספר, או &gt;500 / &lt;100"></th>
-            <th><input id="jfRef" placeholder="סינון" title="סינון לפי אסמכתא"></th>
-            <th><input id="jfAccName" placeholder="סינון" title="סינון לפי תאור חשבון החובה"></th>
-          </tr></thead>
+        <!-- a click on a heading sorts by that column; a second click turns the order around -->
+        <thead><tr id="jHead">
+          <th class="sort" data-jsort="date" title="מיון לפי תאריך"></th><th></th><th></th><th></th>
+          <th class="sort" data-jsort="details">ספק / פרטים (מוגבל ל 24 תווים)</th>
+          <th class="sort" data-jsort="debit">חובה</th>
+          <th class="sort" data-jsort="credit">זכות</th>
+          <th class="sort num" data-jsort="amount">סכום</th>
+          <th class="sort" data-jsort="ref">אסמכתא</th>
+          <th class="sort" data-jsort="accName">תאור חשבון חובה</th>
+        </tr></thead>
         <tbody id="jRows"></tbody>
         <tfoot><tr><td colspan="7" id="jShown"></td><td class="num" id="jSum"></td><td colspan="2"></td></tr></tfoot>
       </table>
@@ -306,6 +313,17 @@
   </div>
 </dialog>
 
+<!-- After a supplier's name is corrected: the documents with a name like it, to take the corrected one. -->
+<dialog id="supDlg" class="sup-dlg">
+  <h2 id="supTitle"></h2>
+  <p class="hint">סמנו את המסמכים של אותו ספק. מסמך שאינו שלו, בטלו את הסימון שלו.</p>
+  <div id="supList"></div>
+  <div class="actions"><span class="grow"></span>
+    <button type="button" class="ghost" id="supNo">לא, תודה</button>
+    <button type="button" class="primary" id="supYes">עדכון המסומנים</button>
+  </div>
+</dialog>
+
 <dialog id="shareDlg">
   <form method="dialog">
     <h2>שיתוף</h2>
@@ -324,6 +342,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=34"></script>
+<script type="module" src="app.js?v=37"></script>
 </body>
 </html>

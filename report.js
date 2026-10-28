@@ -54,8 +54,9 @@ export function parseComparative(wb) {
 }
 
 // A comparative report put together from the documents: each account's total this year and last year.
-// docs are the client's documents; accountOf and accountName come from accounts.js.
-export function comparativeFromDocs(docs, year, accountOf, accountName) {
+// docs are the client's documents; accountOf and accountName come from accounts.js; amountOf is what a
+// document costs the business (without the VAT for a licensed dealer, who claims it back).
+export function comparativeFromDocs(docs, year, accountOf, accountName, amountOf = (r) => r.amount || 0) {
   const by = new Map();
   for (const r of docs) {
     const y = (r.date || "").slice(0, 4);
@@ -63,7 +64,7 @@ export function comparativeFromDocs(docs, year, accountOf, accountName) {
     const code = accountOf(r);
     if (/^15/.test(code)) continue; // a fixed asset bought is not an expense of the year (its depreciation is)
     const line = by.get(code) || { section: lineOf(code), code, name: accountName(code), cur: 0, prev: 0 };
-    line[y === String(year) ? "cur" : "prev"] += r.amount || 0;
+    line[y === String(year) ? "cur" : "prev"] += amountOf(r);
     by.set(code, line);
   }
   return [...by.values()].map((l) => ({ ...l, cur: round2(l.cur), prev: round2(l.prev) })).sort((a, b) => a.code.localeCompare(b.code));

@@ -3,7 +3,7 @@ import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, ro
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
 import { EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=6";
 import { fillFromPath } from "./recheck.js?v=5";
-import { parseComparative, comparativeFromDocs, buildFiling, filingSheet, comparativeSheet, lineOf } from "./report.js?v=2";
+import { parseComparative, comparativeFromDocs, buildFiling, filingSheet, comparativeSheet, lineOf } from "./report.js?v=3";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => (n < 0 ? "-" : "") + "₪" + Math.abs(n || 0).toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -59,7 +59,12 @@ if (CLOUD) {
       try { return (await fs.getDoc(fs.doc(db, "access", email.toLowerCase()))).exists(); } catch { return false; }
     },
     watchClients: (cb, onErr) => fs.onSnapshot(fs.collection(db, "clients"), (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onErr),
-    addClient: (name) => fs.addDoc(fs.collection(db, "clients"), { name, createdAt: fs.serverTimestamp(), createdBy: auth.currentUser.email }),
+    addClient: (name, dealer) => fs.addDoc(fs.collection(db, "clients"), { name, dealer, createdAt: fs.serverTimestamp(), createdBy: auth.currentUser.email }),
+    async setDealer(name, dealer) {
+      const snap = await fs.getDocs(fs.query(fs.collection(db, "clients"), fs.where("name", "==", name)));
+      if (snap.empty) await fs.addDoc(fs.collection(db, "clients"), { name, dealer, createdAt: fs.serverTimestamp(), createdBy: auth.currentUser.email });
+      for (const d of snap.docs) await fs.updateDoc(d.ref, { dealer });
+    },
     async removeClient(name) {
       const snap = await fs.getDocs(fs.query(fs.collection(db, "clients"), fs.where("name", "==", name)));
       for (const d of snap.docs) await fs.deleteDoc(d.ref);
@@ -89,8 +94,14 @@ if (CLOUD) {
     async preview(id) { return localStorage.getItem(PKEY + id) || ""; },
     async savePreview(id, dataUrl) { localStorage.setItem(PKEY + id, dataUrl); },
     watchClients(cb) { const f = () => cb(readJson(CKEY)); clientListeners.add(f); f(); return () => clientListeners.delete(f); },
-    async addClient(name) {
-      localStorage.setItem(CKEY, JSON.stringify([...readJson(CKEY), { id: Date.now().toString(36), name }]));
+    async addClient(name, dealer) {
+      localStorage.setItem(CKEY, JSON.stringify([...readJson(CKEY), { id: Date.now().toString(36), name, dealer }]));
+      clientListeners.forEach((f) => f());
+    },
+    async setDealer(name, dealer) {
+      const all = readJson(CKEY);
+      if (!all.some((c) => c.name === name)) all.push({ id: Date.now().toString(36), name });
+      localStorage.setItem(CKEY, JSON.stringify(all.map((c) => (c.name === name ? { ...c, dealer } : c))));
       clientListeners.forEach((f) => f());
     },
     async removeClient(name) {
@@ -277,18 +288,22 @@ $("clientForm").onsubmit = (e) => {
 };
 $("navClient").onchange = () => chooseClient($("navClient").value);
 
-async function addClient(name) {
+// An exempt dealer (עוסק פטור) records each expense with its VAT; a licensed one (עוסק מורשה) claims the
+// VAT back, so the journal puts it apart on the input-VAT account.
+const dealerOf = (name) => clients.find((c) => c.name === name)?.dealer || "exempt";
+
+async function addClient(name, dealer = "exempt") {
   name = name.trim().replace(/\s+/g, " ");
   if (!name) return false;
   if (!clientNames().includes(name)) {
-    try { await store.addClient(name); }
+    try { await store.addClient(name, dealer); }
     catch (err) { toast("ההוספה נכשלה: " + err.message); return false; }
   }
   return name;
 }
 $("newClientForm").onsubmit = async (e) => {
   e.preventDefault();
-  const name = await addClient($("newClientName").value);
+  const name = await addClient($("newClientName").value, $("newClientDealer").value);
   if (!name) return;
   $("newClientName").value = "";
   chooseClient(name);
@@ -301,10 +316,8 @@ $("allDocsBtn").onclick = () => {
   renderTable();
   showView("docs");
 };
-$("addClientBtn").onclick = async () => {
-  const name = await addClient(prompt("שם הלקוח החדש:") || "");
-  if (name) chooseClient(name);
-};
+// A new client is added on the home page, where its type is chosen with it.
+$("addClientBtn").onclick = () => { showClients(); $("newClientName").focus(); };
 
 // Deleting a client takes all their documents with them, for good: the name has to be typed to confirm.
 $("delClientBtn").onclick = async () => {
@@ -361,7 +374,9 @@ const FIELDS = [
   { k: "date", label: "תאריך", type: "date", need: true },
   { k: "supplier", label: "ספק", need: true },
   { k: "supplierId", label: "ח.פ / ע.מ" },
-  { k: "category", label: "סוג שירות", list: "catList", need: true },
+  // every service type the app knows, and any other already given to a document
+  { k: "category", label: "סוג שירות", need: true,
+    options: () => [...new Set([...CATEGORY_NAMES, ...records.map((r) => r.category).filter(Boolean)])] },
   { k: "docType", label: "סוג מסמך", options: () => DOC_TYPE_NAMES },
   { k: "docNo", label: "מספר מסמך" },
   { k: "amount", label: "סכום כולל מע״מ (₪)", type: "number", need: true },
@@ -1380,7 +1395,59 @@ async function saveEntry(approve) {
     const spread = await spreadCategory(rec, id);
     toast((why.length ? "נשמר. המסמך עדיין מסומן לבדיקה" : "נשמר ואושר")
       + (spread ? `. סוג השירות "${rec.category}" נוסף גם ל-${spread} מסמכים של אותו ספק` : ""));
+    if (before && rec.supplier && rec.supplier !== before.supplier) offerSupplierFix(before.supplier || "", rec, id);
   } catch (err) { toast("השמירה נכשלה: " + err.message); }
+}
+
+// ---------- a supplier's name corrected by hand, on its look-alikes ----------
+// Pairs of letters two names share (0 to 1): a misread name ("שחל המרתהטעצרעים") still shares many
+// of them with the right one ("שחק אותה צעצועים"); an unrelated supplier hardly any.
+function nameLikeness(a, b) {
+  const norm = (s) => (s || "").toLowerCase().replace(/בע["״']?מ/g, "").replace(/[^\p{L}]/gu, "");
+  const grams = (s) => { const g = new Map(); for (let i = 0; i < s.length - 1; i++) g.set(s.slice(i, i + 2), (g.get(s.slice(i, i + 2)) || 0) + 1); return g; };
+  a = norm(a); b = norm(b);
+  if (a.length < 2 || b.length < 2) return a && a === b ? 1 : 0;
+  const A = grams(a), B = grams(b);
+  let both = 0;
+  for (const [k, n] of A) both += Math.min(n, B.get(k) || 0);
+  return (2 * both) / (a.length + b.length - 2);
+}
+
+// After a supplier's name is corrected, the documents whose supplier looks like it (or like the name it
+// had before, or has the same company number) are offered to take the corrected name, ticked in a list.
+async function offerSupplierFix(oldName, rec, id) {
+  const like = records.map((x) => ({ x, score: Math.max(nameLikeness(x.supplier, rec.supplier), nameLikeness(x.supplier, oldName),
+      rec.supplierId && x.supplierId === rec.supplierId ? 1 : 0) }))
+    .filter(({ x, score }) => x.id !== id && x.supplier && x.supplier !== rec.supplier && score >= 0.3)
+    .sort((a, b) => b.score - a.score).slice(0, 40);
+  if (!like.length) return;
+  $("supTitle").textContent = `לעדכן את שם הספק ל"${rec.supplier}" גם במסמכים הדומים?`;
+  $("supList").innerHTML = like.map(({ x }) => `<label class="sup-row"><input type="checkbox" value="${esc(x.id)}" checked>
+    <span>${esc(x.supplier)}</span><small>${esc([x.client, showDate(x.date), x.amount ? fmt(x.amount) : ""].filter(Boolean).join(" · "))}</small></label>`).join("");
+  $("supDlg").showModal();
+  const ok = await new Promise((done) => {
+    $("supYes").onclick = () => done(true);
+    $("supNo").onclick = () => done(false);
+    $("supDlg").oncancel = () => done(false);
+  });
+  const ids = [...$("supList").querySelectorAll("input:checked")].map((i) => i.value);
+  $("supDlg").close();
+  if (!ok || !ids.length) return;
+  let n = 0;
+  for (const xid of ids) {
+    const x = records.find((r) => r.id === xid);
+    if (!x) continue;
+    const upd = { supplier: rec.supplier };
+    if (!x.supplierId && rec.supplierId) upd.supplierId = rec.supplierId;
+    if (!x.category && rec.category) upd.category = rec.category;
+    // a document waiting for review is checked again with the right name (the garbled one was a reason)
+    if (x.status === "review") {
+      const why = reviewReasons({ ...x, ...upd }, { exceptId: x.id, noText: (x.reviewWhy || "").includes("לא נמצא טקסט") });
+      Object.assign(upd, { status: why.length ? "review" : "ok", reviewWhy: why.join(" · ") });
+    }
+    try { await store.update(xid, upd); n++; } catch { /* the rest still go on */ }
+  }
+  toast(`שם הספק עודכן ב-${n} מסמכים`);
 }
 $("entryForm").onsubmit = (e) => { e.preventDefault(); saveEntry(false); };
 $("approveBtn").onclick = () => saveEntry(true);
@@ -1552,40 +1619,55 @@ const jDate = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slic
 // The balance date (the fourth): a document from before the year counts from its first day.
 const balanceDate = (iso, year) => (iso && year && iso < `${year}-01-01` ? `${year}-01-01` : iso);
 
-// The year's lines, before the filters.
+// The year's lines, before the filters. For a licensed dealer (עוסק מורשה) a document with VAT is two
+// lines: the expense without the VAT, and the VAT on the input-VAT account (מע"מ תשומות, 205002).
+const VAT_ACCOUNT = "205002";
 function yearLines() {
   const year = $("jYear").value;
   return records.filter((r) => inScope(r) && (!year || (r.date || "").startsWith(year)))
-    .map((r) => ({
-      r, date: r.date || "", balance: balanceDate(r.date || "", year),
-      details: (r.supplier || r.details || r.fileName || "").replace(/\s+/g, " ").trim().slice(0, 24),
-      debit: accountOf(r), credit: OWNER_ACCOUNT, amount: r.amount || 0, ref: r.docNo || "",
-    }))
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .sort((a, b) => (a.date || "").localeCompare(b.date || ""))
+    .flatMap((r) => {
+      const line = {
+        r, date: r.date || "", balance: balanceDate(r.date || "", year),
+        details: (r.supplier || r.details || r.fileName || "").replace(/\s+/g, " ").trim().slice(0, 24),
+        debit: accountOf(r), credit: OWNER_ACCOUNT, amount: r.amount || 0, ref: r.docNo || "",
+      };
+      const vat = r.vat || 0;
+      if (dealerOf(r.client) !== "licensed" || !vat || vat >= line.amount) return [line];
+      return [{ ...line, amount: round2(line.amount - vat) }, { ...line, debit: VAT_ACCOUNT, amount: vat, vatLine: true }];
+    });
 }
 
-// The filters above the table, then the one under each column.
-const J_COLS = {
-  jfDate: (l) => [jDate(l.date), jDate(l.balance)].join(" "),
-  jfDetails: (l) => l.details, jfDebit: (l) => l.debit, jfCredit: (l) => l.credit,
-  jfRef: (l) => l.ref, jfAccName: (l) => accountName(l.debit),
+const J_FILTERS = ["jSearch", "jMonth", "jAcc", "jStatus", "jMin", "jMax"];
+// A click on a heading sorts by its column; again, the other way round.
+let jSort = { key: "date", dir: 1 };
+const J_SORT = {
+  date: (l) => l.date, details: (l) => l.details, debit: (l) => +l.debit, credit: (l) => +l.credit,
+  amount: (l) => l.amount, ref: (l) => (/^\d+$/.test(l.ref) ? +l.ref : l.ref), accName: (l) => accountName(l.debit),
 };
-const J_FILTERS = ["jSearch", "jMonth", "jAcc", "jStatus", "jMin", "jMax", ...Object.keys(J_COLS), "jfAmount"];
-// The amount column takes a number to look for, or ">500" / "<100".
-function amountMatches(amount, q) {
-  const m = q.replace(/[,\s₪]/g, "").match(/^([<>]=?)?(\d+(?:\.\d+)?)$/);
-  if (!m) return String(amount).includes(q);
-  const n = +m[2];
-  return m[1] === ">" ? amount > n : m[1] === ">=" ? amount >= n : m[1] === "<" ? amount < n : m[1] === "<=" ? amount <= n
-    : String(amount).includes(m[2]);
+function sortLines(lines) {
+  const get = J_SORT[jSort.key];
+  return [...lines].sort((a, b) => {
+    const x = get(a), y = get(b);
+    const c = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "he", { numeric: true });
+    return c * jSort.dir;
+  });
 }
+$("jHead").addEventListener("click", (e) => {
+  const th = e.target.closest("[data-jsort]");
+  if (!th) return;
+  const key = th.dataset.jsort;
+  // amounts start from the largest, the rest from the start
+  jSort = jSort.key === key ? { key, dir: -jSort.dir } : { key, dir: key === "amount" ? -1 : 1 };
+  renderJournal();
+});
 const J_MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
 
 // The lines shown: the year's lines through the search, month, account, state and amount filters.
 function journalLines(base = yearLines()) {
   const q = $("jSearch").value.trim().toLowerCase(), month = $("jMonth").value, acc = $("jAcc").value, status = $("jStatus").value;
   const min = $("jMin").value === "" ? null : +$("jMin").value, max = $("jMax").value === "" ? null : +$("jMax").value;
-  return base.filter((l) => {
+  const shown = base.filter((l) => {
     if (month && l.date.slice(5, 7) !== month) return false;
     if (acc && l.debit !== acc) return false;
     if (status === "review" && !needsReview(l.r)) return false;
@@ -1594,18 +1676,13 @@ function journalLines(base = yearLines()) {
     if (status === "guessed" && byHand(l.r)) return false;
     if (min != null && l.amount < min) return false;
     if (max != null && l.amount > max) return false;
-    for (const [id, cell] of Object.entries(J_COLS)) {
-      const v = $(id).value.trim().toLowerCase();
-      if (v && !String(cell(l) ?? "").toLowerCase().includes(v)) return false;
-    }
-    const amt = $("jfAmount").value.trim();
-    if (amt && !amountMatches(l.amount, amt)) return false;
     if (q) {
       const hay = [l.r.supplier, l.r.details, l.r.fileName, l.ref, l.debit, accountName(l.debit), String(l.amount), jDate(l.date)].join(" ").toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
   });
+  return sortLines(shown);
 }
 
 // Keeps a list's choice when it is still there after the options change.
@@ -1636,20 +1713,37 @@ function renderJournal() {
   const sum = lines.reduce((s, l) => s + l.amount, 0);
   $("jShown").textContent = filtered ? `מוצגות ${lines.length} מתוך ${base.length} שורות` : `${lines.length} שורות`;
   $("jSum").textContent = sum.toLocaleString("he-IL", { maximumFractionDigits: 2 });
-  $("jRows").innerHTML = lines.map((l) => `<tr data-id="${l.r.id}"${needsReview(l.r) ? ' class="dup"' : ""}>
+  // the VAT line of a licensed dealer's document has its fixed account, not one to pick
+  const acc = (l, inner, cls) => (l.vatLine ? inner : pickable(l, inner, cls));
+  $("jRows").innerHTML = lines.map((l) => `<tr data-id="${esc(l.r.id)}" class="${needsReview(l.r) ? "dup" : ""}${l.vatLine ? " vat-line" : ""}">
       <td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.balance)}</td>
-      <td>${needsReview(l.r) ? '<span title="מסמך לבדיקה">⚠️</span> ' : ""}${esc(l.details)}</td>
-      <td class="num">${pickable(l, l.debit, "acc-code")}</td>
+      <td>${needsReview(l.r) && !l.vatLine ? '<span title="מסמך לבדיקה">⚠️</span> ' : ""}${esc(l.details)}</td>
+      <td class="num">${acc(l, esc(l.debit), "acc-code")}</td>
       <td class="num">${l.credit}</td>
       <td class="num">${l.amount.toLocaleString("he-IL", { maximumFractionDigits: 2 })}</td>
       <td class="num">${esc(l.ref)}</td>
-      <td>${pickable(l, esc(accountName(l.debit)), "acc-name")}</td></tr>`).join("");
+      <td>${acc(l, esc(accountName(l.debit)), "acc-name")}</td></tr>`).join("");
   $("jEmpty").hidden = lines.length > 0;
+  document.querySelectorAll("#jHead [data-jsort]").forEach((th) => {
+    th.querySelector(".arrow")?.remove();
+    if (th.dataset.jsort === jSort.key) th.insertAdjacentHTML("beforeend", `<span class="arrow">${jSort.dir > 0 ? "▲" : "▼"}</span>`);
+  });
+  // The client's dealer type, beside the year.
+  const one = client && client !== ALL;
+  $("jDealer").hidden = !one;
+  if (one) $("jDealer").value = dealerOf(client);
 }
 // Another year starts from the full list: the filters are cleared.
 $("jYear").addEventListener("input", () => { J_FILTERS.forEach((id) => { $(id).value = ""; }); renderJournal(); });
 J_FILTERS.forEach((id) => $(id).addEventListener("input", renderJournal));
 $("jClear").onclick = () => { J_FILTERS.forEach((id) => { $(id).value = ""; }); renderJournal(); };
+$("jDealer").onchange = async () => {
+  const dealer = $("jDealer").value;
+  try {
+    await store.setDealer(client, dealer);
+    toast(dealer === "licensed" ? `${client}: עוסק מורשה. המע״מ נרשם בנפרד לחשבון מע״מ תשומות` : `${client}: עוסק פטור. ההוצאה נרשמת כולל מע״מ`);
+  } catch (err) { toast("השמירה נכשלה: " + err.message); renderJournal(); }
+};
 
 // Clicking the account turns it into a list of the expense accounts; picking one saves it on the document.
 $("jRows").addEventListener("click", (e) => {
@@ -1844,7 +1938,8 @@ $("fFromDocs").onclick = async () => {
   if (!filing) return;
   if (filing.lines.length && filing.source === "file"
       && !confirm("לשנה הזו כבר יש דוח השוואתי מקובץ. להחליף אותו בחישוב מהמסמכים במערכת?")) return;
-  const lines = comparativeFromDocs(records.filter(inScope), +filing.year, accountOf, accountName);
+  const net = (r) => (dealerOf(r.client) === "licensed" && r.vat && r.vat < (r.amount || 0) ? r.amount - r.vat : r.amount || 0);
+  const lines = comparativeFromDocs(records.filter(inScope), +filing.year, accountOf, accountName, net);
   if (!lines.length) { toast(`אין מסמכים לשנת ${filing.year}`); return; }
   filing = { ...filing, source: "docs", fileName: "", lines };
   await saveFiling(`חושב מ-${lines.length} חשבונות של המסמכים`);

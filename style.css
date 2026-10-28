@@ -430,8 +430,15 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .dlg-nav { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .dlg-nav button { padding: 5px 12px; font-size: 14px; }
 .dlg-nav .soon { flex: 1; text-align: center; }
-/* the filter under each journal column */
-.col-filters th { padding: 4px 4px 8px; }
-.col-filters input { width: 100%; min-width: 60px; box-sizing: border-box; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--glass-line);
-  background: var(--field); color: var(--field-text); font-size: 13px; font-weight: 400; }
-.col-filters input:not(:placeholder-shown) { outline: 2px solid var(--accent); }
+/* the journal's headings sort the lines */
+#jHead th.sort { cursor: pointer; user-select: none; white-space: nowrap; }
+#jHead th.sort:hover { color: var(--accent); }
+#jHead th .arrow { margin-inline-start: 4px; color: var(--accent); }
+.home-card .new-client select { padding: 10px 8px; border-radius: 10px; border: 1px solid #e4cfc2; background: #fff; color: var(--brand-ink); }
+.journal tr.vat-line td { color: var(--muted); }
+/* the documents offered a corrected supplier's name */
+.sup-dlg { width: min(640px, calc(100vw - 32px)); }
+#supList { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.sup-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: rgba(255, 255, 255, .06); cursor: pointer; }
+.sup-row span { flex: 1; }
+.sup-row small { color: var(--muted); white-space: nowrap; }
