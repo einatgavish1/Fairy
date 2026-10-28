@@ -35,8 +35,12 @@ if (CLOUD) {
   const auth = fa.getAuth(app);
   const db = fs.getFirestore(app);
   const col = fs.collection(db, "docs");
+  const ff = await import(V + "firebase-functions.js");
+  const readDocument = ff.httpsCallable(ff.getFunctions(app, "me-west1"), "readDocument", { timeout: 120000 });
   store = {
     auth, fa,
+    // Claude's reading of a document's picture (functions/index.js).
+    aiRead: async (payload) => (await readDocument(payload)).data,
     watch: (cb, onErr) => fs.onSnapshot(col, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onErr),
     async add(rec, preview) {
       const ref = await fs.addDoc(col, { ...rec, createdAt: fs.serverTimestamp(), createdBy: auth.currentUser.email });
@@ -483,6 +487,34 @@ function reviewReasons(r, { exceptId, noText = false, failed = "", skip = [] } =
   return why;
 }
 
+// ---------- reading with Claude ----------
+// The picture goes to the readDocument function, with where the file was kept and the app's own lists.
+// -> { fields, account, unclear } or null (local mode, or the service failed: the local reading stays).
+// After a failure that will not pass by itself (no key, no function yet) it is not tried again.
+let aiOff = !CLOUD;
+const AI_LABELS = { supplier: "ספק", supplierId: "ח.פ", customer: "שם הלקוח", date: "תאריך", amount: "סכום",
+  vat: "מע״מ", docType: "סוג מסמך", docNo: "מספר מסמך", account: "חשבון" };
+async function aiReading(image, path, onStatus) {
+  if (aiOff || !store.aiRead || !/^data:image\//.test(image || "")) return null;
+  onStatus?.("🤖 קורא עם Claude…");
+  try {
+    const r = await store.aiRead({ image, path, docTypes: DOC_TYPE_NAMES.filter((t) => t !== "אחר"),
+      categories: CATEGORY_NAMES, accounts: EXPENSE_ACCOUNTS });
+    const fields = {};
+    for (const k of ["supplier", "supplierId", "customer", "docNo", "details"]) if (r[k]) fields[k] = String(r[k]).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(r.date || "") && r.date <= new Date().toISOString().slice(0, 10)) fields.date = r.date;
+    for (const k of ["amount", "vat"]) if (typeof r[k] === "number" && r[k] > 0) fields[k] = r[k];
+    if (r.docType) fields.docType = r.docType;
+    if (r.category) fields.category = r.category;
+    const unsure = (r.unclear || []).map((k) => AI_LABELS[k]).filter(Boolean);
+    return { fields, account: r.account || "", unclear: unsure.length ? `Claude לא בטוח ב: ${unsure.join(", ")}` : "" };
+  } catch (e) {
+    if (/not-found|failed-precondition|permission-denied|unauthenticated/.test(e.code || "")) aiOff = true;
+    console.warn("Claude reading failed:", e.code, e.message);
+    return null;
+  }
+}
+
 // A supplier's name that is not a name: a time or a date in it, a long number, a label from the
 // receipt ("שעה:"), or more stray marks and single letters than words ("% ג ו יי אי אוא").
 function odd(name) {
@@ -771,7 +803,10 @@ async function processFile(file, path, batch) {
   } else {
     el.querySelector(".thumb").innerHTML = '<span class="soon">📄</span>';
   }
-  const found = failed ? {} : parseText(text, hint, alt);
+  let found = failed ? {} : parseText(text, hint, alt);
+  // Claude reads the picture; what it finds wins over the local reading, which stays when it fails.
+  const ai = preview ? await aiReading(preview, path, (label) => status(0.95, label)) : null;
+  if (ai) found = { ...found, ...ai.fields };
   let rec = {
     client: clientFor(found.customer), customer: found.customer || "",
     date: found.date || "", supplier: found.supplier || "", supplierId: found.supplierId || "",
@@ -792,7 +827,11 @@ async function processFile(file, path, batch) {
   // The date, the journal account and the service type from the folders and the file's name, where
   // the document itself did not tell them (the account by the kind of item, from all its text).
   fillFromPath(rec, `${text}\n${alt}`);
-  const why = reviewReasons(rec, { exceptId: reread?.id, noText: !failed && !text.trim() && !alt.trim(), failed });
+  // Claude's account, from the items it saw, unless one was chosen by hand.
+  if (ai?.account && rec.accountBy !== "hand") Object.assign(rec, { account: ai.account, accountBy: "auto" });
+  const why = [...reviewReasons(rec, { exceptId: reread?.id, noText: !ai && !failed && !text.trim() && !alt.trim(), failed: ai ? "" : failed }),
+    ...(ai?.unclear ? [ai.unclear] : [])];
+  if (ai) failed = "";
   rec.status = failed ? "failed" : why.length ? "review" : "ok";
   rec.reviewWhy = why.join(" · ");
 
@@ -1190,18 +1229,22 @@ function dialogPicture(id, src, r) {
     const btn = $("dlgReread");
     btn.disabled = true;
     try {
-      const res = await rereadPreview(src, 0, (p) => (btn.textContent = `📖 קורא… ${Math.round(p * 100)}%`));
-      const found = parseText(res.text, "", res.alt);
-      // What the new reading found replaces what was read before; the client and the account stay.
+      // Claude first; the reading in the browser only when it is not there.
+      const ai = await aiReading(src, r.fileName || "", (label) => (btn.textContent = label));
+      const found = ai ? ai.fields : await rereadPreview(src, 0, (p) => (btn.textContent = `📖 קורא… ${Math.round(p * 100)}%`))
+        .then((res) => parseText(res.text, "", res.alt));
+      if (ai?.account) found.account = ai.account;
+      // What the new reading found replaces what was read before; the client stays.
       let n = 0;
-      for (const k of ["date", "supplier", "supplierId", "customer", "category", "docType", "docNo", "amount", "vat", "details"]) {
+      for (const k of ["date", "supplier", "supplierId", "customer", "category", "docType", "docNo", "amount", "vat", "details", "account"]) {
         const input = $("dlgFields").querySelector(`[name=${k}]`);
         if (!input || found[k] === "" || found[k] == null) continue;
         input.value = found[k];
         n++;
       }
       $("dlgFields").dispatchEvent(new Event("input"));
-      toast(n ? `נקראו ${n} פרטים מהתמונה. בדקו אותם ושמרו.` : "גם בכיוון הזה לא נקראו פרטים. נסו לסובב את התמונה.");
+      toast(n ? `${ai ? "Claude קרא" : "נקראו"} ${n} פרטים מהתמונה.${ai?.unclear ? ` ${ai.unclear}.` : ""} בדקו אותם ושמרו.`
+        : "גם בכיוון הזה לא נקראו פרטים. נסו לסובב את התמונה.");
     } catch (e) { toast("הקריאה נכשלה: " + e.message); }
     btn.disabled = false;
     btn.textContent = "📖 קריאה מחדש";
@@ -1227,13 +1270,17 @@ $("rereadAll").onclick = async () => {
     try {
       const src = await previewOf(r.id);
       if (src) {
-        const res = await rereadPreview(src, null);
-        const found = parseText(res.text, "", res.alt);
+        // Claude's reading replaces what was read before (these documents were not checked yet); without
+        // it, the browser's reading only fills what is missing.
+        const ai = await aiReading(src, r.fileName || "");
+        const res = ai ? { text: "", alt: "" } : await rereadPreview(src, null);
+        const found = ai ? ai.fields : parseText(res.text, "", res.alt);
         const upd = { ...r };
-        for (const k of KEYS) if (empty(upd[k]) && !empty(found[k])) upd[k] = found[k];
-        if (!upd.text) upd.text = [res.text, res.alt].filter(Boolean).join("\n----\n").slice(0, 15000);
+        for (const k of KEYS) if (!empty(found[k]) && (ai || empty(upd[k]))) upd[k] = found[k];
+        if (!upd.text && !ai) upd.text = [res.text, res.alt].filter(Boolean).join("\n----\n").slice(0, 15000);
         fillFromPath(upd, `${res.text}\n${res.alt}`);
-        const why = reviewReasons(upd, { exceptId: r.id });
+        if (ai?.account && upd.accountBy !== "hand") Object.assign(upd, { account: ai.account, accountBy: "auto" });
+        const why = [...reviewReasons(upd, { exceptId: r.id }), ...(ai?.unclear ? [ai.unclear] : [])];
         upd.status = why.length ? "review" : "ok";
         upd.reviewWhy = why.join(" · ");
         const changes = Object.fromEntries(Object.keys(upd).filter((k) => k !== "id" && upd[k] !== r[k]).map((k) => [k, upd[k]]));
