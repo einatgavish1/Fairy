@@ -430,3 +430,8 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .dlg-nav { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .dlg-nav button { padding: 5px 12px; font-size: 14px; }
 .dlg-nav .soon { flex: 1; text-align: center; }
+/* the filter under each journal column */
+.col-filters th { padding: 4px 4px 8px; }
+.col-filters input { width: 100%; min-width: 60px; box-sizing: border-box; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--glass-line);
+  background: var(--field); color: var(--field-text); font-size: 13px; font-weight: 400; }
+.col-filters input:not(:placeholder-shown) { outline: 2px solid var(--accent); }

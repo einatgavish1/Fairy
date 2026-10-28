@@ -1,4 +1,4 @@
-import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
+import { firebaseConfig, OWNER_EMAILS, AI_READING } from "./firebase-config.js?v=2";
 import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview } from "./extract.js?v=14";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
 import { EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=6";
@@ -491,7 +491,7 @@ function reviewReasons(r, { exceptId, noText = false, failed = "", skip = [] } =
 // The picture goes to the readDocument function, with where the file was kept and the app's own lists.
 // -> { fields, account, unclear } or null (local mode, or the service failed: the local reading stays).
 // After a failure that will not pass by itself (no key, no function yet) it is not tried again.
-let aiOff = !CLOUD;
+let aiOff = !CLOUD || !AI_READING;
 const AI_LABELS = { supplier: "ספק", supplierId: "ח.פ", customer: "שם הלקוח", date: "תאריך", amount: "סכום",
   vat: "מע״מ", docType: "סוג מסמך", docNo: "מספר מסמך", account: "חשבון" };
 async function aiReading(image, path, onStatus) {
@@ -1564,7 +1564,21 @@ function yearLines() {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-const J_FILTERS = ["jSearch", "jMonth", "jAcc", "jStatus", "jMin", "jMax"];
+// The filters above the table, then the one under each column.
+const J_COLS = {
+  jfDate: (l) => [jDate(l.date), jDate(l.balance)].join(" "),
+  jfDetails: (l) => l.details, jfDebit: (l) => l.debit, jfCredit: (l) => l.credit,
+  jfRef: (l) => l.ref, jfAccName: (l) => accountName(l.debit),
+};
+const J_FILTERS = ["jSearch", "jMonth", "jAcc", "jStatus", "jMin", "jMax", ...Object.keys(J_COLS), "jfAmount"];
+// The amount column takes a number to look for, or ">500" / "<100".
+function amountMatches(amount, q) {
+  const m = q.replace(/[,\s₪]/g, "").match(/^([<>]=?)?(\d+(?:\.\d+)?)$/);
+  if (!m) return String(amount).includes(q);
+  const n = +m[2];
+  return m[1] === ">" ? amount > n : m[1] === ">=" ? amount >= n : m[1] === "<" ? amount < n : m[1] === "<=" ? amount <= n
+    : String(amount).includes(m[2]);
+}
 const J_MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
 
 // The lines shown: the year's lines through the search, month, account, state and amount filters.
@@ -1580,6 +1594,12 @@ function journalLines(base = yearLines()) {
     if (status === "guessed" && byHand(l.r)) return false;
     if (min != null && l.amount < min) return false;
     if (max != null && l.amount > max) return false;
+    for (const [id, cell] of Object.entries(J_COLS)) {
+      const v = $(id).value.trim().toLowerCase();
+      if (v && !String(cell(l) ?? "").toLowerCase().includes(v)) return false;
+    }
+    const amt = $("jfAmount").value.trim();
+    if (amt && !amountMatches(l.amount, amt)) return false;
     if (q) {
       const hay = [l.r.supplier, l.r.details, l.r.fileName, l.ref, l.debit, accountName(l.debit), String(l.amount), jDate(l.date)].join(" ").toLowerCase();
       if (!hay.includes(q)) return false;

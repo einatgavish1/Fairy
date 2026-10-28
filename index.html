@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=23">
+<link rel="stylesheet" href="style.css?v=24">
 </head>
 <body>
 
@@ -206,7 +206,17 @@
     </div>
     <div class="tablewrap">
       <table class="journal">
-        <thead><tr><th></th><th></th><th></th><th></th><th>ספק / פרטים (מוגבל ל 24 תווים)</th><th>חובה</th><th>זכות</th><th class="num">סכום</th><th>אסמכתא</th><th>תאור חשבון חובה</th></tr></thead>
+        <thead><tr><th></th><th></th><th></th><th></th><th>ספק / פרטים (מוגבל ל 24 תווים)</th><th>חובה</th><th>זכות</th><th class="num">סכום</th><th>אסמכתא</th><th>תאור חשבון חובה</th></tr>
+          <!-- a filter under each column: the lines whose cell holds what is typed -->
+          <tr class="col-filters">
+            <th><input id="jfDate" placeholder="תאריך" title="סינון לפי תאריך, למשל 01/25"></th><th></th><th></th><th></th>
+            <th><input id="jfDetails" placeholder="סינון" title="סינון לפי ספק / פרטים"></th>
+            <th><input id="jfDebit" placeholder="סינון" title="סינון לפי חשבון חובה" inputmode="numeric"></th>
+            <th><input id="jfCredit" placeholder="סינון" title="סינון לפי חשבון זכות" inputmode="numeric"></th>
+            <th><input id="jfAmount" placeholder="סינון" title="סכום: מספר, או &gt;500 / &lt;100"></th>
+            <th><input id="jfRef" placeholder="סינון" title="סינון לפי אסמכתא"></th>
+            <th><input id="jfAccName" placeholder="סינון" title="סינון לפי תאור חשבון החובה"></th>
+          </tr></thead>
         <tbody id="jRows"></tbody>
         <tfoot><tr><td colspan="7" id="jShown"></td><td class="num" id="jSum"></td><td colspan="2"></td></tr></tfoot>
       </table>
@@ -314,6 +324,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=33"></script>
+<script type="module" src="app.js?v=34"></script>
 </body>
 </html>

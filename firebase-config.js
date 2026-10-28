@@ -12,3 +12,7 @@ export const firebaseConfig = {
 // The owners can always sign in and manage who else may (the "שיתוף" button).
 // Keep in step with isOwner() in firestore.rules.
 export const OWNER_EMAILS = ["einatgavish1@gmail.com", "gavishori@gmail.com"];
+
+// Reading documents with Claude through the readDocument function (functions/index.js). On only once the
+// function is deployed and Claude is enabled in Vertex AI; off, the reading stays in the browser.
+export const AI_READING = false;
