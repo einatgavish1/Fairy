@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=33">
+<link rel="stylesheet" href="style.css?v=34">
 </head>
 <body>
 
@@ -67,11 +67,12 @@
     <div class="side-nav-title"><img class="nav-logo" src="assets/logo.png" alt="עינת גביש · רואת חשבון"></div>
     <label class="cur-client"><small>לקוח</small><select id="navClient"></select></label>
     <button data-view="upload" class="active">📥 קליטת מסמכים</button>
-    <button data-view="docs">📋 מסמכים <span class="nav-badge" id="reviewBadge" hidden></span></button>
+    <button data-view="docs">📋 מסמכי הוצאות <span class="nav-badge" id="reviewBadge" hidden></span></button>
     <button data-view="journal">📒 פקודות יומן</button>
     <button data-view="donations">💝 תרומות</button>
     <button data-view="filing">📄 דוח להגשה</button>
     <button data-view="summary">📊 סיכום</button>
+    <button data-view="misc">🗂️ מסמכים שונים</button>
     <div class="side-nav-foot">
       <span class="email" id="userEmail"></span>
       <span class="mode" id="modeNote" hidden>מצב מקומי: הנתונים נשמרים רק בדפדפן הזה</span>
@@ -113,7 +114,7 @@
 
   <main class="panel view-panel" data-view="docs">
     <div class="panel-head">
-      <h2>📋 מסמכים <span class="page-client" id="pageClient2"></span></h2>
+      <h2>📋 מסמכי הוצאות <span class="page-client" id="pageClient2"></span></h2>
       <div class="head-actions"><button class="ghost" id="exportBtn">ייצוא לאקסל</button></div>
     </div>
     <div class="cards">
@@ -292,6 +293,30 @@
     </div>
   </main>
 
+  <!-- Other documents of the client (a rent contract, form 106...): kept with the client, not expenses. -->
+  <main class="panel view-panel" data-view="misc">
+    <div class="panel-head">
+      <h2>🗂️ מסמכים שונים <span class="page-client" id="pageClient7"></span></h2>
+      <div class="head-actions">
+        <select id="mType" title="סוג מסמך"></select>
+        <select id="mYear" title="שנה"></select>
+      </div>
+    </div>
+    <p class="hint">מסמכים של הלקוח שאינם הוצאות: חוזה ושכר דירה, טופס 106, אישורים ועוד. הם נשמרים כאן בלבד, ולא נכנסים לפקודות היומן ולדוחות. סוג המסמך מזוהה לבד, ואפשר לשנות אותו ואת השם.</p>
+    <p class="soon" id="miscNeedClient" hidden>בחרו לקוח ברשימה שבתפריט הצד כדי להעלות ולראות את המסמכים שלו.</p>
+    <div id="miscMain">
+      <div class="drop drop-small" id="mDrop">
+        <input type="file" id="mFile" accept="application/pdf,image/*,.heic,.heif,.tif,.tiff,.jfif,.docx" multiple hidden>
+        <span class="drop-icon" aria-hidden="true">🗂️</span>
+        <b>גוררים לכאן מסמכים שונים, או</b>
+        <button type="button" class="primary" id="mPick">📄 בחירת קבצים</button>
+      </div>
+      <div id="mQueue"></div>
+      <div class="gallery misc-list" id="mList"></div>
+      <p class="empty" id="mEmpty" hidden>עוד אין מסמכים שונים ללקוח הזה.</p>
+    </div>
+  </main>
+
   <main class="panel view-panel" data-view="summary">
     <div class="panel-head">
       <h2>📊 סיכום <span class="page-client" id="pageClient3"></span></h2>
@@ -397,6 +422,6 @@
 <div id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=50"></script>
+<script type="module" src="app.js?v=51"></script>
 </body>
 </html>

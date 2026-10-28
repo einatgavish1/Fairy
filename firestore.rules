@@ -25,7 +25,7 @@ service cloud.firestore {
     function validDoc() {
       let d = request.resource.data;
       return d.keys().hasOnly(['client', 'date', 'supplier', 'supplierId', 'category', 'docType', 'docNo', 'details',
-                               'amount', 'vat', 'fileName', 'fileHash', 'customer', 'status', 'reviewWhy', 'account', 'accountBy', 'notDup', 'checked', 'currency', 'origAmount', 'origVat', 'rate', 'rateDate', 'text', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
+                               'amount', 'vat', 'fileName', 'fileHash', 'customer', 'status', 'reviewWhy', 'account', 'accountBy', 'notDup', 'checked', 'kind', 'title', 'currency', 'origAmount', 'origVat', 'rate', 'rateDate', 'text', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
           && (d.amount == null || d.amount is number)
           && (d.vat == null || d.vat is number)
           && d.date is string && d.supplier is string && d.details is string
@@ -37,6 +37,9 @@ service cloud.firestore {
           && (!('origVat' in d) || d.origVat == null || d.origVat is number)
           && (!('rate' in d) || d.rate == null || (d.rate is number && d.rate > 0 && d.rate < 100))
           && (!('rateDate' in d) || (d.rateDate is string && d.rateDate.size() <= 10))
+          // kind "misc": one of the client's other documents (a rent contract, form 106...), not an expense
+          && (!('kind' in d) || d.kind in ['', 'misc'])
+          && (!('title' in d) || (d.title is string && d.title.size() <= 150))
           // checked: a person went over the document (the green tick)
           && (!('checked' in d) || d.checked is bool)
           && (!('notDup' in d) || (d.notDup is list && d.notDup.size() < 50))

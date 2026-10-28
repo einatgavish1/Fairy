@@ -124,6 +124,9 @@ if (CLOUD) {
 // ---------- sign-in ----------
 
 let user = null, records = [], clients = [], unsub = null, unsubClients = null;
+// The client's other documents (kind "misc": a rent contract, form 106...) are kept apart from the expense
+// documents, so nothing that works on expenses ever sees them.
+let miscDocs = [];
 // The client being worked on; ALL shows everyone's documents together.
 const ALL = "*";
 let client = null;
@@ -146,7 +149,11 @@ function enterApp() {
   const denied = (err) => showLogin(err.code === "permission-denied"
     ? `לחשבון ${user.email} אין הרשאה. בקשו מהבעלים לשתף אתכם.`
     : "שגיאה בטעינת הנתונים: " + err.message);
-  unsub = store.watch((all) => { records = all; renderAll(); }, denied);
+  unsub = store.watch((all) => {
+    records = all.filter((r) => r.kind !== "misc");
+    miscDocs = all.filter((r) => r.kind === "misc");
+    renderAll();
+  }, denied);
   unsubClients = store.watchClients((all) => { clients = all; renderAll(); }, denied);
   showClients();
 }
@@ -367,7 +374,7 @@ function chooseClient(name) {
   try { localStorage.setItem("fairy-last-client", name); } catch {}
   const all = name === ALL;
   const title = all ? "" : `· ${name || "לא שויכו ללקוח"}`;
-  for (const id of ["pageClient", "pageClient2", "pageClient3", "pageClient4", "pageClient5", "pageClient6"]) $(id).textContent = title;
+  for (const id of ["pageClient", "pageClient2", "pageClient3", "pageClient4", "pageClient5", "pageClient6", "pageClient7"]) $(id).textContent = title;
   loadFiling();
   $("clientPick").hidden = !all;
   $("clientFixed").hidden = all;
@@ -1114,6 +1121,7 @@ function renderAll() {
   renderSummary();
   renderJournal();
   renderDonations();
+  renderMisc();
 }
 
 // id -> why it looks like another saved record. Recomputed whenever the records change.
@@ -2196,6 +2204,111 @@ $("dExport").onclick = () => {
   const who = client && client !== ALL ? `${client} ` : "";
   XLSX.writeFile(wb, `תרומות ${who}${$("dYear").value || "כל השנים"}.xlsx`);
 };
+
+// ---------- other documents (מסמכים שונים) ----------
+// Documents of the client that are not expenses. Each keeps its picture and text, a name (from the file's
+// name, to change), and its kind, told from its name and text where it can be.
+const MISC_TYPES = [
+  ["שכר דירה / חוזה שכירות", /שכר\s*דירה|שכ["״']?ד|חוזה\s*שכירות|הסכם\s*שכירות|שוכר|משכיר/],
+  ["טופס 106", /106/],
+  ["טופס 867", /867/],
+  ["אישור ניכוי מס במקור", /ניכוי\s*(?:מס\s*)?במקור/],
+  ["ביטוח לאומי", /ביטוח\s*לאומי|המוסד\s*לביטוח/],
+  ["פנסיה וביטוחים", /פנסי|קרן\s*השתלמות|ביטוח\s*מנהלים|קופת\s*גמל|ביטוח\s*חיים/],
+  ["משכנתא והלוואות", /משכנת|הלוואה|הלוואות/],
+  ["אישור בנק / יתרות", /אישור\s*יתרה|יתרות|דף\s*חשבון|תדפיס/],
+  ["רשות המסים", /רשות\s*המסים|מס\s*הכנסה|פקיד\s*שומה|שומה/],
+];
+const MISC_NAMES = [...MISC_TYPES.map(([n]) => n), "אחר"];
+const miscTypeOf = (text, name) => (MISC_TYPES.find(([, re]) => re.test(name)) || MISC_TYPES.find(([, re]) => re.test(text)) || ["אחר"])[0];
+const miscYear = (r) => (r.date || "").slice(0, 4) || (r.createdAt?.toDate ? String(r.createdAt.toDate().getFullYear()) : "");
+
+function renderMisc() {
+  const none = !client || client === ALL;
+  $("miscNeedClient").hidden = !none;
+  $("miscMain").hidden = none;
+  if (none) return;
+  const mine = miscDocs.filter(inScope);
+  const keep = (id, opts) => {
+    const cur = $(id).value;
+    $(id).innerHTML = opts;
+    if ([...$(id).options].some((o) => o.value === cur)) $(id).value = cur;
+  };
+  keep("mType", '<option value="">כל הסוגים</option>' + MISC_NAMES.filter((n) => mine.some((r) => r.docType === n)).map((n) => `<option>${esc(n)}</option>`).join(""));
+  keep("mYear", '<option value="">כל השנים</option>' + [...new Set(mine.map(miscYear).filter(Boolean))].sort().reverse().map((y) => `<option>${esc(y)}</option>`).join(""));
+  const type = $("mType").value, year = $("mYear").value;
+  const rows = mine.filter((r) => (!type || r.docType === type) && (!year || miscYear(r) === year))
+    .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (a.title || "").localeCompare(b.title || "", "he"));
+  $("mList").innerHTML = rows.map((r) => `<div class="g-card misc-card" data-id="${esc(r.id)}">
+      <div class="g-pic" data-mpic="${esc(r.id)}" title="לחיצה מגדילה"><small class="soon">טוען…</small></div>
+      <div class="g-info">
+        <input class="m-title" value="${esc(r.title || r.fileName || "")}" title="שם המסמך" aria-label="שם המסמך">
+        <select class="m-type" aria-label="סוג המסמך">${MISC_NAMES.map((n) => `<option${n === r.docType ? " selected" : ""}>${esc(n)}</option>`).join("")}</select>
+        <span class="g-foot"><small>${esc([showDate(r.date), r.fileName].filter(Boolean).join(" · "))}</small>
+          <button type="button" class="icon-del" data-mdel="${esc(r.id)}" title="מחיקת המסמך" aria-label="מחיקת המסמך">🗑️</button></span>
+      </div></div>`).join("");
+  $("mEmpty").hidden = rows.length > 0;
+  for (const r of rows) previewOf(r.id).then((src) => {
+    const box = $("mList").querySelector(`[data-mpic="${CSS.escape(r.id)}"]`);
+    if (box) box.innerHTML = src ? `<img src="${src}" alt="">` : '<small class="soon">אין תמונה</small>';
+  });
+}
+$("mType").addEventListener("input", renderMisc);
+$("mYear").addEventListener("input", renderMisc);
+$("mList").addEventListener("click", async (e) => {
+  const pic = e.target.closest("[data-mpic]");
+  if (pic) { const src = await previewOf(pic.dataset.mpic); if (src) zoom(src); return; }
+  const del = e.target.closest("[data-mdel]");
+  if (!del) return;
+  const r = miscDocs.find((x) => x.id === del.dataset.mdel);
+  if (!r) return;
+  // two questions, as with every deletion
+  if (!confirm(`למחוק את "${r.title || r.fileName}"?`)) return;
+  if (!confirm("אישור שני ואחרון: המסמך והתמונה שלו יימחקו לצמיתות, ואי אפשר יהיה לשחזר. למחוק?")) return;
+  try { await store.remove(r.id); previewCache.delete(r.id); toast("המסמך נמחק"); } catch (err) { toast("המחיקה נכשלה: " + err.message); }
+});
+$("mList").addEventListener("change", async (e) => {
+  const card = e.target.closest("[data-id]");
+  if (!card) return;
+  const upd = e.target.classList.contains("m-title") ? { title: e.target.value.trim().slice(0, 150) }
+    : e.target.classList.contains("m-type") ? { docType: e.target.value } : null;
+  if (!upd) return;
+  try { await store.update(card.dataset.id, upd); toast("נשמר"); } catch (err) { toast("השמירה נכשלה: " + err.message); }
+});
+
+// Upload: read like any document (its picture and text), saved as the chosen client's other document.
+$("mPick").onclick = (e) => { e.stopPropagation(); $("mFile").click(); };
+$("mDrop").onclick = () => $("mFile").click();
+$("mFile").onchange = (e) => { addMisc([...e.target.files]); e.target.value = ""; };
+$("mDrop").addEventListener("dragover", (e) => { e.preventDefault(); $("mDrop").classList.add("over"); });
+$("mDrop").addEventListener("dragleave", () => $("mDrop").classList.remove("over"));
+$("mDrop").addEventListener("drop", (e) => { e.preventDefault(); $("mDrop").classList.remove("over"); addMisc([...e.dataTransfer.files]); });
+async function addMisc(files) {
+  if (!client || client === ALL) { toast("בחרו קודם לקוח"); return; }
+  const who = client;
+  for (const file of files) {
+    const el = document.createElement("div");
+    el.className = "item";
+    el.innerHTML = `<div class="thumb"><span class="soon">⏳</span></div><div class="body"><span class="fname">${esc(file.name)}</span><div class="result">קורא…</div></div>`;
+    $("mQueue").prepend(el);
+    const say = (html, cls = "") => { el.className = `item ${cls}`; el.querySelector(".result").innerHTML = html; };
+    let hash = "";
+    try { hash = await fingerprint(file); } catch { /* without it a copy is not caught */ }
+    // the same file again asks first, as in the expenses' intake
+    const same = hash && miscDocs.find((r) => r.fileHash === hash && r.client === who);
+    if (same && !confirm(`"${file.name}" כבר קיים במסמכים השונים של ${who} (בשם "${same.title}"). להעלות אותו שוב?`)) { say("⏭️ לא הועלה: כבר קיים", "dup"); continue; }
+    let text = "", alt = "", preview = "";
+    try { ({ text, alt = "", preview } = await oneAtATime(() => readFile(file, () => {}))); }
+    catch (err) { say(`❌ לא נקרא: ${esc(err.message)}`, "failed"); continue; }
+    if (preview) el.querySelector(".thumb").innerHTML = `<img src="${preview}" alt="">`;
+    const all = [text, alt].filter(Boolean).join("\n----\n");
+    const name = file.name.replace(/\.[^.]+$/, "");
+    const rec = { client: who, kind: "misc", title: name.slice(0, 150), docType: miscTypeOf(all, name), date: parseText(text, "", alt).date || "",
+      supplier: "", details: "", amount: null, vat: null, fileName: file.name, fileHash: hash, text: all.slice(0, 15000), status: "ok", reviewWhy: "" };
+    try { await store.add(rec, preview); say(`✅ נשמר · ${esc(rec.docType)}${rec.date ? ` · ${showDate(rec.date)}` : ""}`, "saved"); }
+    catch (err) { say(`❌ השמירה נכשלה: ${esc(err.message)}`, "failed"); }
+  }
+}
 
 // ---------- filing report (דוח להגשה) ----------
 // For one client and tax year: the comparative report (imported from the bookkeeping software's Excel,

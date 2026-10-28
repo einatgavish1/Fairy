@@ -492,3 +492,13 @@ dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .dup-wait { margin: 10px 0; padding: 10px 14px; border-radius: 10px; font-weight: 700; animation: review-blink 1.2s ease-in-out infinite; border: 1px solid var(--accent); }
 .item.ask { border-color: var(--accent); animation: review-blink 1.2s ease-in-out infinite; }
 .item.ask .item-actions { display: flex; gap: 8px; }
+/* other documents: a smaller drop area and cards with a name and a kind to change */
+.drop.drop-small { flex-direction: row; justify-content: center; gap: 12px; padding: 14px; margin-bottom: 12px; }
+.drop.drop-small .drop-icon { font-size: 24px; }
+.misc-list { margin-top: 12px; }
+.misc-card { cursor: default; }
+.misc-card .g-pic { cursor: zoom-in; }
+.misc-card .m-title, .misc-card .m-type { width: 100%; box-sizing: border-box; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--glass-line);
+  background: var(--field); color: var(--field-text); font-size: 14px; }
+.misc-card .m-title { font-weight: 700; }
+#mQueue .item { margin-bottom: 6px; }
