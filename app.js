@@ -573,6 +573,8 @@ function reviewReasons(r, { exceptId, noText = false, failed = "", skip = [] } =
   if (dup) why.push(`ייתכן כפילות (${dup.why}) של: ${dup.what}`);
   if (r.supplier && odd(r.supplier)) why.push("שם הספק נראה משובש");
   if (foreign(r) && !r.rate) why.push(`תשלום ב-${r.currency}: חסר שער יציג ליום התשלום`);
+  // a date years back is most likely a misread year ("31/05/01" for 2025)
+  if (r.date && +r.date.slice(0, 4) < new Date().getFullYear() - 6) why.push(`התאריך נראה שגוי (שנת ${r.date.slice(0, 4)})`);
   return why;
 }
 
@@ -1938,7 +1940,7 @@ $("jRows").addEventListener("click", (e) => {
   if (tr) openEntry(tr.dataset.id);
 });
 
-// The same lines as an Excel sheet, laid out like the workbook: real dates shown as dd/mm/yy,
+// The same lines as an Excel sheet, laid out like the workbook: real dates shown as dd/mm/yy (always with slashes),
 // the accounts and amounts as numbers.
 $("jExport").onclick = () => {
   const lines = journalLines();
@@ -1954,7 +1956,8 @@ $("jExport").onclick = () => {
   for (let r = 1; r < aoa.length; r++) {
     for (let c = 0; c < 4; c++) {
       const cell = ws[XLSX.utils.encode_cell({ r, c })];
-      if (cell && cell.t === "n") cell.z = "dd/mm/yy";
+      // a quoted "/" is a slash as written; a bare one is the computer's own date separator (a "-" on some)
+      if (cell && cell.t === "n") cell.z = 'dd"/"mm"/"yy';
     }
     const sum = ws[XLSX.utils.encode_cell({ r, c: 7 })];
     if (sum && sum.t === "n") sum.z = Number.isInteger(sum.v) ? "#,##0" : "#,##0.00";
