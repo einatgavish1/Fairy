@@ -545,3 +545,8 @@ input[type="number"]:not([name="pct"])::-webkit-outer-spin-button { -webkit-appe
 /* an amount typed as a calculation: what it adds up, under the field */
 .calc-hint { display: block; min-height: 0; font-size: 12px; color: #ffd34d; overflow-wrap: anywhere; }
 .calc-hint:empty { display: none; }
+
+/* exported to Priority, and changed after it */
+.tag.pr { cursor: pointer; font: inherit; background: none; padding: 0 5px; border-color: rgba(140, 220, 160, .7); }
+.tag.pr.changed { border-color: #ffcc00; color: #ffcc00; animation: review-blink 1.2s ease-in-out infinite; }
+#prMore { max-width: 170px; }

@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=42">
+<link rel="stylesheet" href="style.css?v=43">
 </head>
 <body>
 
@@ -205,7 +205,10 @@
           <button type="button" class="link" id="jDealerChange" title="שינוי סוג העוסק והיסטוריית השינויים">שינוי…</button>
         </span>
         <select id="jYear" title="שנה"></select>
-        <button class="primary" id="jExport">ייצוא לאקסל</button>
+        <button class="ghost" id="jExport" title="כל השורות המוצגות, לבדיקה. לא מסמן כלום">ייצוא לאקסל</button>
+        <!-- only the lines not yet exported to Priority, which are then marked -->
+        <button class="primary" id="prExport" title="רק שורות שעוד לא יוצאו לפריוריטי, ואחר כך הן מסומנות">📤 ייצוא לפריוריטי</button>
+        <select id="prMore" title="ייצוא חוזר של קבוצה קודמת, וסימון מסמכים שכבר הועברו"><option value="">עוד…</option></select>
       </div>
     </div>
     <p class="hint">כל מסמך הוא שורת הוצאה. חשבון החובה נקבע לפי סוג הפריט שבמסמך; לחיצה על החשבון או על התאור שלו מאפשרת לשנות אותו. לחיצה על שאר השורה פותחת את המסמך.</p>
@@ -222,6 +225,9 @@
         <option value="hand">חשבון שנבחר ביד</option>
         <option value="checked">✓ נבדקו</option>
         <option value="unchecked">עוד לא נבדקו</option>
+        <option value="pr-no">📤 לא יוצאו לפריוריטי</option>
+        <option value="pr-yes">📤 יוצאו לפריוריטי</option>
+        <option value="pr-changed">⚠️ שונו אחרי הייצוא</option>
       </select>
       <input type="number" id="jMin" placeholder="מסכום" min="0" step="any" class="j-amount">
       <input type="number" id="jMax" placeholder="עד סכום" min="0" step="any" class="j-amount">
@@ -433,6 +439,6 @@
 <div id="toast" popover="manual" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=62"></script>
+<script type="module" src="app.js?v=63"></script>
 </body>
 </html>

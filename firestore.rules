@@ -25,7 +25,7 @@ service cloud.firestore {
     function validDoc() {
       let d = request.resource.data;
       return d.keys().hasOnly(['client', 'date', 'supplier', 'supplierId', 'category', 'docType', 'docNo', 'details',
-                               'amount', 'vat', 'fileName', 'fileHash', 'customer', 'status', 'reviewWhy', 'account', 'accountBy', 'notDup', 'checked', 'kind', 'title', 'driveId', 'currency', 'origAmount', 'origVat', 'rate', 'rateDate', 'paid', 'pct', 'checkedAt', 'checkedBy', 'amountCalc', 'vatCalc', 'origAmountCalc', 'paidCalc', 'text', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
+                               'amount', 'vat', 'fileName', 'fileHash', 'customer', 'status', 'reviewWhy', 'account', 'accountBy', 'notDup', 'checked', 'kind', 'title', 'driveId', 'currency', 'origAmount', 'origVat', 'rate', 'rateDate', 'paid', 'pct', 'checkedAt', 'checkedBy', 'prExport', 'prSnap', 'amountCalc', 'vatCalc', 'origAmountCalc', 'paidCalc', 'text', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
           && (d.amount == null || d.amount is number)
           && (d.vat == null || d.vat is number)
           && d.date is string && d.supplier is string && d.details is string
@@ -40,6 +40,9 @@ service cloud.firestore {
           // a home bill: what was paid and the percentage of it that is the expense
           && (!('paid' in d) || d.paid == null || d.paid is number)
           && (!('pct' in d) || d.pct == null || (d.pct is number && d.pct >= 0 && d.pct <= 100))
+          // exported to Priority: when (the batch, ms) and what the document said then
+          && (!('prExport' in d) || d.prExport == null || d.prExport is number)
+          && (!('prSnap' in d) || (d.prSnap is string && d.prSnap.size() <= 500))
           // an amount typed as a calculation (78.33+80.10), kept to go on with
           && (!('amountCalc' in d) || (d.amountCalc is string && d.amountCalc.size() <= 1000))
           && (!('vatCalc' in d) || (d.vatCalc is string && d.vatCalc.size() <= 1000))

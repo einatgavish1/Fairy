@@ -2099,8 +2099,7 @@ const balanceDate = (iso, year) => (iso && year && iso < `${year}-01-01` ? `${ye
 // The year's lines, before the filters. For a licensed dealer (עוסק מורשה) a document with VAT is two
 // lines: the expense without the VAT, and the VAT on the input-VAT account (מע"מ תשומות, 205002).
 const VAT_ACCOUNT = "205002";
-function yearLines() {
-  const year = $("jYear").value;
+function yearLines(year = $("jYear").value) {
   return records.filter((r) => inScope(r) && !isDonationDoc(r) && (!year || (r.date || "").startsWith(year)))
     .sort((a, b) => (a.date || "").localeCompare(b.date || ""))
     .flatMap((r) => {
@@ -2154,6 +2153,9 @@ function journalLines(base = yearLines()) {
     if (status === "guessed" && byHand(l.r)) return false;
     if (status === "checked" && !l.r.checked) return false;
     if (status === "unchecked" && l.r.checked) return false;
+    if (status === "pr-no" && l.r.prExport) return false;
+    if (status === "pr-yes" && !l.r.prExport) return false;
+    if (status === "pr-changed" && !prChanged(l.r)) return false;
     if (min != null && l.amount < min) return false;
     if (max != null && l.amount > max) return false;
     if (q) {
@@ -2198,7 +2200,7 @@ function renderJournal() {
   $("jRows").innerHTML = lines.map((l) => `<tr data-id="${esc(l.r.id)}" class="${needsReview(l.r) ? "dup" : ""}${l.vatLine ? " vat-line" : ""}">
       <td class="tick-cell">${l.vatLine ? "" : tickBtn(l.r)}</td>
       <td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.balance)}</td>
-      <td>${needsReview(l.r) && !l.vatLine ? '<span title="מסמך לבדיקה">⚠️</span> ' : ""}${foreign(l.r) ? `<span class="tag fx" title="${esc(fxNote(l.r))}">${FX[l.r.currency].sign} ${esc(l.r.currency)}</span> ` : ""}${esc(l.details)}</td>
+      <td>${needsReview(l.r) && !l.vatLine ? '<span title="מסמך לבדיקה">⚠️</span> ' : ""}${foreign(l.r) ? `<span class="tag fx" title="${esc(fxNote(l.r))}">${FX[l.r.currency].sign} ${esc(l.r.currency)}</span> ` : ""}${l.vatLine ? "" : prTag(l.r)}${esc(l.details)}</td>
       <td class="num">${acc(l, esc(l.debit), "acc-code")}</td>
       <td class="num">${l.credit}</td>
       <td class="num">${l.amount.toLocaleString("he-IL", { maximumFractionDigits: 2 })}</td>
@@ -2271,15 +2273,16 @@ $("jRows").addEventListener("click", (e) => {
 
 // The same lines as an Excel sheet, laid out like the workbook: real dates shown as dd/mm/yy (always with slashes),
 // the accounts and amounts as numbers.
-$("jExport").onclick = () => {
-  const lines = journalLines();
-  if (!lines.length) { toast("אין מה לייצא"); return; }
+// The lines for checking (with a column of when each went to Priority), or for Priority itself (without it).
+function writeJournal(lines, fileName, { prColumn = false } = {}) {
   // Excel's own day number (days since 30-12-1899), so no time zone can move a date by a day.
   const toDate = (iso) => (iso ? (Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) - Date.UTC(1899, 11, 30)) / 864e5 : "");
-  const aoa = [["הוצאות", "", "", "", "ספק / פרטים (מוגבל ל 24 תווים)", "חובה", "זכות", "סכום", "אסמכתא", "תאור חשבון חובה"]];
+  const aoa = [["הוצאות", "", "", "", "ספק / פרטים (מוגבל ל 24 תווים)", "חובה", "זכות", "סכום", "אסמכתא", "תאור חשבון חובה",
+    ...(prColumn ? ["יוצא לפריוריטי"] : [])]];
   for (const l of lines) {
     aoa.push([toDate(l.date), toDate(l.date), toDate(l.date), toDate(l.balance), l.details,
-      +l.debit, +l.credit, l.amount, /^\d+$/.test(l.ref) ? +l.ref : l.ref, accountName(l.debit)]);
+      +l.debit, +l.credit, l.amount, /^\d+$/.test(l.ref) ? +l.ref : l.ref, accountName(l.debit),
+      ...(prColumn ? [l.r.prExport ? `${dateTime(l.r.prExport)}${prChanged(l.r) ? " · שונה אחרי הייצוא" : ""}` : ""] : [])]);
   }
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   for (let r = 1; r < aoa.length; r++) {
@@ -2291,13 +2294,108 @@ $("jExport").onclick = () => {
     const sum = ws[XLSX.utils.encode_cell({ r, c: 7 })];
     if (sum && sum.t === "n") sum.z = Number.isInteger(sum.v) ? "#,##0" : "#,##0.00";
   }
-  ws["!cols"] = [10, 10, 10, 10, 26, 9, 9, 11, 12, 22].map((wch) => ({ wch }));
+  ws["!cols"] = [10, 10, 10, 10, 26, 9, 9, 11, 12, 22, ...(prColumn ? [24] : [])].map((wch) => ({ wch }));
   const wb = XLSX.utils.book_new();
   wb.Workbook = { Views: [{ RTL: true }] };
   XLSX.utils.book_append_sheet(wb, ws, "פקודות יומן");
+  XLSX.writeFile(wb, fileName);
+}
+// For checking: every line shown, nothing marked.
+$("jExport").onclick = () => {
+  const lines = journalLines();
+  if (!lines.length) { toast("אין מה לייצא"); return; }
   const who = client && client !== ALL ? `${client} ` : "";
-  XLSX.writeFile(wb, `פקודות יומן ${who}${$("jYear").value || "כל השנים"}.xlsx`);
+  writeJournal(lines, `פקודות יומן ${who}${$("jYear").value || "כל השנים"}.xlsx`, { prColumn: true });
 };
+
+// ---------- export to Priority ----------
+// Only what did not go to Priority yet, so loading it there never doubles a line. Each document exported is
+// marked with the time of its export (the batch) and what it said then: one changed afterwards is shown as
+// such, to fix in Priority too, and is not exported again by itself.
+const prSnap = (r) => [r.date, r.amount, r.vat, accountOf(r), r.docNo, r.supplier].map((v) => v ?? "").join("|");
+const prChanged = (r) => !!r.prExport && r.prSnap !== prSnap(r);
+const prTag = (r) => (!r.prExport ? ""
+  : prChanged(r) ? `<button type="button" class="tag pr changed" data-pr="${esc(r.id)}" title="יוצא לפריוריטי ב-${esc(dateTime(r.prExport))} ושונה אחרי זה: לתקן גם בפריוריטי · לחיצה לביטול הסימון">⚠️ שונה אחרי הייצוא</button> `
+  : `<button type="button" class="tag pr" data-pr="${esc(r.id)}" title="יוצא לפריוריטי ב-${esc(dateTime(r.prExport))} · לחיצה לביטול הסימון">📤</button> `);
+const prWho = () => (client && client !== ALL ? client : "");
+const stamp = (t) => new Date(t).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(/[/:]/g, "-").replace(/,?\s+/, " ");
+async function markExported(docs, batch) {
+  let n = 0;
+  for (const r of docs) {
+    try { await store.update(r.id, { prExport: batch, prSnap: prSnap(r) }); n++; } catch { /* the rest still go on */ }
+  }
+  return n;
+}
+$("prExport").onclick = async () => {
+  const who = prWho();
+  if (!who) { toast("בחרו לקוח: הייצוא לפריוריטי הוא של לקוח אחד"); return; }
+  // every year of the client, whatever is shown
+  const all = yearLines("");
+  const waiting = all.filter((l) => !l.r.prExport);
+  const ready = waiting.filter((l) => !needsReview(l.r));
+  const review = new Set(waiting.filter((l) => needsReview(l.r)).map((l) => l.r.id)).size;
+  const done = new Set(all.filter((l) => l.r.prExport).map((l) => l.r.id)).size;
+  if (!ready.length) { toast(review ? `אין שורות חדשות לייצוא: ${review} מסמכים עוד מחכים לבדיקה` : "אין שורות חדשות לייצוא: הכול כבר יוצא לפריוריטי"); return; }
+  const docs = [...new Map(ready.map((l) => [l.r.id, l.r])).values()];
+  if (!confirm(`לייצא לפריוריטי ${ready.length} שורות חדשות (${docs.length} מסמכים) של ${who}?`
+    + `${done ? `\n${done} מסמכים כבר יוצאו בעבר ולא ייכללו.` : ""}`
+    + `${review ? `\n${review} מסמכים שמחכים לבדיקה לא ייכללו עד שיאושרו.` : ""}`
+    + "\n\nאחרי הייצוא השורות יסומנו כמיוצאות.")) return;
+  const batch = Date.now();
+  writeJournal(sortLines(ready), `פריוריטי ${who} ${stamp(batch)}.xlsx`);
+  const n = await markExported(docs, batch);
+  toast(`יוצאו ${ready.length} שורות וסומנו ${n} מסמכים כמיוצאים לפריוריטי`);
+};
+// More: a batch again (when loading it into Priority failed), and marking what went to Priority before.
+function fillPrMore() {
+  const who = prWho();
+  const batches = new Map();
+  for (const r of records) if (inScope(r) && !isDonationDoc(r) && r.prExport) batches.set(r.prExport, (batches.get(r.prExport) || 0) + 1);
+  $("prMore").innerHTML = '<option value="">עוד…</option>'
+    + [...batches].sort((a, b) => b[0] - a[0]).slice(0, 30).map(([t, n]) => `<option value="${t}">↻ ייצוא חוזר: ${esc(dateTime(t))} · ${n} מסמכים</option>`).join("")
+    + (who ? '<option value="old">✔️ סימון מסמכים שכבר הועברו כמיוצאים…</option>' : "");
+}
+$("prMore").addEventListener("focus", fillPrMore);
+$("prMore").addEventListener("pointerdown", fillPrMore);
+$("prMore").addEventListener("change", async () => {
+  const v = $("prMore").value;
+  $("prMore").value = "";
+  const who = prWho();
+  if (v === "old") {
+    const ans = prompt(`סימון המסמכים של ${who} שכבר הועברו לפריוריטי, כדי שלא ייצאו שוב.\nעד איזה תאריך (כולל)? לדוגמה 30/09/2026`);
+    const m = (ans || "").trim().match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/);
+    if (!ans) return;
+    if (!m) { toast("התאריך לא הובן. כתבו אותו כמו 30/09/2026"); return; }
+    const iso = `${m[3].length === 2 ? "20" + m[3] : m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    const docs = [...new Map(yearLines("").filter((l) => !l.r.prExport && l.date && l.date <= iso).map((l) => [l.r.id, l.r])).values()];
+    if (!docs.length) { toast(`אין מסמכים לא מיוצאים עד ${showDate(iso)}`); return; }
+    if (!confirm(`לסמן ${docs.length} מסמכים של ${who} עד ${showDate(iso)} כאילו כבר יוצאו לפריוריטי? הם לא ייכללו בייצוא הבא.`)) return;
+    const n = await markExported(docs, Date.now());
+    toast(`${n} מסמכים סומנו כמיוצאים לפריוריטי`);
+    return;
+  }
+  if (!v) return;
+  // the same batch again, as it is now; nothing is marked anew
+  const batch = +v;
+  const lines = yearLines("").filter((l) => l.r.prExport === batch);
+  if (!lines.length) { toast("לא נמצאו שורות בקבוצה הזו"); return; }
+  writeJournal(sortLines(lines), `פריוריטי ${who ? who + " " : ""}${stamp(batch)} (ייצוא חוזר).xlsx`);
+  toast(`הקבוצה מ-${dateTime(batch)} יוצאה שוב: ${lines.length} שורות`);
+});
+// A click on the mark: it was not exported after all (or the fix was made in Priority).
+$("jRows").addEventListener("click", async (e) => {
+  const tag = e.target.closest("[data-pr]");
+  if (!tag) return;
+  e.stopPropagation();
+  const r = records.find((x) => x.id === tag.dataset.pr);
+  if (!r) return;
+  if (prChanged(r) && confirm(`המסמך שונה אחרי שיוצא לפריוריטי (${dateTime(r.prExport)}).\n\nאישור: השינוי תוקן גם בפריוריטי, להסיר את האזהרה.\nביטול: להמשיך לשאלה על ביטול הסימון.`)) {
+    try { await store.update(r.id, { prSnap: prSnap(r) }); toast("האזהרה הוסרה"); } catch (err) { toast("השמירה נכשלה: " + err.message); }
+    return;
+  }
+  if (!confirm(`לבטל את סימון הייצוא לפריוריטי של המסמך הזה (${dateTime(r.prExport)})?\nהוא ייכלל שוב בייצוא הבא לפריוריטי.`)) return;
+  try { await store.update(r.id, { prExport: null, prSnap: "" }); toast("סימון הייצוא בוטל"); } catch (err) { toast("השמירה נכשלה: " + err.message); }
+}, true);
 
 // ---------- donations (תרומות) ----------
 // Receipts for donations are not expenses: they are listed here, apart, and left out of the journal and
