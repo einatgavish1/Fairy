@@ -541,3 +541,7 @@ input[type="number"]:not([name="pct"])::-webkit-outer-spin-button { -webkit-appe
 
 /* the last approval and save, under the document window's title */
 .dlg-done { margin: -6px 0 12px; font-size: 13px; }
+
+/* an amount typed as a calculation: what it adds up, under the field */
+.calc-hint { display: block; min-height: 0; font-size: 12px; color: #ffd34d; overflow-wrap: anywhere; }
+.calc-hint:empty { display: none; }

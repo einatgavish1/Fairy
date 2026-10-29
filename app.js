@@ -465,15 +465,16 @@ const FIELDS = [
   { k: "supplierId", label: "ח.פ / ע.מ" },
   { k: "docType", label: "סוג מסמך", options: () => DOC_TYPE_NAMES },
   { k: "docNo", label: "מספר מסמך" },
-  { k: "amount", label: "סכום כולל מע״מ (₪)", type: "number", need: true },
-  { k: "vat", label: "מע״מ (₪)", type: "number" },
+  // an amount may be typed as a calculation (78.33+78.33+80.10), kept with the record to go on with later
+  { k: "amount", label: "סכום כולל מע״מ (₪)", type: "number", calc: true, need: true },
+  { k: "vat", label: "מע״מ (₪)", type: "number", calc: true },
   // paid in a foreign currency: the amount as paid and the Bank of Israel representative rate of that day
   { k: "currency", label: "מטבע התשלום", options: () => FX_CODES.map((c) => [c, FX[c].name]) },
-  { k: "origAmount", label: 'סכום מט"ח', type: "number" },
+  { k: "origAmount", label: 'סכום מט"ח', type: "number", calc: true },
   { k: "rate", label: "שער יציג", type: "number", exact: true },
   { k: "account", label: "חשבון חובה (פקודות יומן)", options: () => EXPENSE_ACCOUNTS.map(([c, n]) => [c, `${c} · ${n}`]) },
   // electricity, water, municipal tax, gas: the bill as paid, and the part of it recognised as the expense
-  { k: "paid", label: "סכום ששולם (₪)", type: "number", home: true },
+  { k: "paid", label: "סכום ששולם (₪)", type: "number", calc: true, home: true },
   { k: "pct", label: "אחוז הנחה (%)", type: "number", exact: true, step: 1, min: 0, max: 100, home: true },
   { k: "details", label: "פירוט", wide: true },
 ];
@@ -482,6 +483,55 @@ const FIELDS = [
 const HOME_ACCOUNTS = ["613003", "613004", "613005", "613006"];
 const HOME_PCT = 25;
 const isHome = (account) => HOME_ACCOUNTS.includes(account);
+
+// ---------- a calculation in an amount field ----------
+// Numbers with + - * / and brackets (× ÷ too); no eval. -> the number, NaN when it is not a calculation
+// that works out, null when empty.
+function calcValue(text) {
+  const s = String(text ?? "").replace(/[,\s₪]/g, "").replace(/×/g, "*").replace(/÷/g, "/");
+  if (!s) return null;
+  let i = 0;
+  const num = () => { const m = /^(\d+\.?\d*|\.\d+)/.exec(s.slice(i)); if (!m) throw 0; i += m[0].length; return parseFloat(m[0]); };
+  const atom = () => {
+    if (s[i] === "-") { i++; return -atom(); }
+    if (s[i] === "+") { i++; return atom(); }
+    if (s[i] === "(") { i++; const v = sum(); if (s[i++] !== ")") throw 0; return v; }
+    return num();
+  };
+  const prod = () => { let v = atom(); while (s[i] === "*" || s[i] === "/") { const o = s[i++], b = atom(); v = o === "*" ? v * b : v / b; } return v; };
+  const sum = () => { let v = prod(); while (s[i] === "+" || s[i] === "-") { const o = s[i++], b = prod(); v = o === "+" ? v + b : v - b; } return v; };
+  try { const v = sum(); return i === s.length && isFinite(v) ? v : NaN; } catch { return NaN; }
+}
+const isCalc = (text) => /\d\s*[-+*/×÷]\s*[\d(.]|[()]/.test(String(text ?? "").replace(/^\s*-/, ""));
+// The calculation behind a field's number: the one typed now, or the one kept, while the number shown is its result.
+const calcOf = (el) => (isCalc(el.value) ? el.value.trim() : el.dataset.expr && el.value === el.dataset.shown ? el.dataset.expr : "");
+function calcHint(el) {
+  const hint = el.parentElement.querySelector(".calc-hint");
+  if (!hint) return;
+  const expr = calcOf(el), v = calcValue(el.value);
+  if (Number.isNaN(v)) { hint.textContent = "⚠️ החישוב לא תקין"; return; }
+  if (!expr) { hint.textContent = ""; return; }
+  const n = expr.split(/[-+]/).filter((x) => x.trim()).length;
+  hint.innerHTML = document.activeElement === el ? `= <bdi dir="ltr">${fmt2(calcValue(expr))}</bdi>`
+    : `🧮 ${n > 1 ? `${n} סכומים: ` : ""}<bdi dir="ltr">${esc(expr)}</bdi>`;
+  hint.title = "לחיצה על השדה מציגה את החישוב, להמשיך להוסיף";
+}
+// A calculation field: on entering it the calculation comes back to go on with; on leaving, its result.
+function calcFocus(e) {
+  const el = e.target.closest?.("[data-calc]");
+  if (!el) return;
+  if (e.type === "focusin") {
+    if (el.dataset.expr && el.value === el.dataset.shown) el.value = el.dataset.expr;
+  } else {
+    const v = calcValue(el.value);
+    if (isCalc(el.value) && v != null && !Number.isNaN(v)) {
+      el.dataset.expr = el.value.trim();
+      el.value = el.dataset.shown = String(round2(v));
+    } else if (!isCalc(el.value)) delete el.dataset.expr;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  calcHint(el);
+}
 
 function fieldsHtml(v) {
   return FIELDS.map((f) => {
@@ -492,6 +542,9 @@ function fieldsHtml(v) {
       const list = f.options().map((o) => (Array.isArray(o) ? o : [o, o]));
       const all = val && !list.some(([o]) => o === val) ? [[val, val], ...list] : list;
       input = `<select name="${f.k}"><option value=""></option>${all.map(([o, t]) => `<option value="${esc(o)}"${o === val ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
+    } else if (f.calc) {
+      const expr = v[f.k + "Calc"] || "";
+      input = `<input name="${f.k}" type="text" inputmode="decimal" dir="ltr" autocomplete="off" data-calc="1" value="${esc(val)}"${expr ? ` data-expr="${esc(expr)}" data-shown="${esc(val)}"` : ""}${f.need ? ' placeholder="אפשר לחשב: 78.33+80.10"' : ""}><small class="calc-hint"></small>`;
     } else {
       input = `<input name="${f.k}" type="${f.type || "text"}" value="${esc(val)}"${f.list ? ` list="${f.list}" autocomplete="off"` : ""}${f.type === "number" ? ` step="${f.step || (f.exact ? "any" : "0.01")}" inputmode="decimal" dir="ltr"` : ""}${f.min != null ? ` min="${f.min}" max="${f.max}"` : ""}>`;
     }
@@ -507,24 +560,33 @@ function bindFields(box) {
     const pct = box.querySelector("[name=pct]");
     if (home && pct.value === "") pct.value = HOME_PCT;
     if (home && ["paid", "pct", "account"].includes(e?.target.name)) {
-      const paid = parseFloat(box.querySelector("[name=paid]").value);
-      if (!isNaN(paid)) box.querySelector("[name=amount]").value = round2(paid * (parseFloat(pct.value) || 0) / 100);
+      const paid = calcValue(box.querySelector("[name=paid]").value);
+      if (paid != null && !Number.isNaN(paid)) box.querySelector("[name=amount]").value = round2(paid * (parseFloat(pct.value) || 0) / 100);
     }
     box.querySelectorAll("label[data-need='1']").forEach((l) => l.classList.toggle("miss", !l.querySelector("input,select").value));
+    box.querySelectorAll("[data-calc]").forEach(calcHint);
     const r = readFields(box);
     box.querySelector(".calc").textContent = r.amount ? `לפני מע״מ: ${fmt(net(r))}` : "";
   };
   box.addEventListener("input", update);
+  box.addEventListener("focusin", calcFocus);
+  box.addEventListener("focusout", calcFocus);
   update();
 }
 
 function readFields(box) {
   const out = {};
   for (const f of FIELDS) {
-    const v = box.querySelector(`[name=${f.k}]`).value.trim();
+    const el = box.querySelector(`[name=${f.k}]`), v = el.value.trim();
+    if (f.calc) {
+      const n = calcValue(v);
+      out[f.k] = n == null || Number.isNaN(n) ? null : round2(n);
+      out[f.k + "Calc"] = calcOf(el);
+      continue;
+    }
     out[f.k] = f.type === "number" ? (v === "" ? null : f.exact ? parseFloat(v) : round2(parseFloat(v))) : v;
   }
-  if (!isHome(out.account)) out.paid = out.pct = null;
+  if (!isHome(out.account)) { out.paid = out.pct = null; out.paidCalc = ""; }
   return out;
 }
 
