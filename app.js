@@ -1,5 +1,5 @@
 import { firebaseConfig, OWNER_EMAILS, AI_READING } from "./firebase-config.js?v=2";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview } from "./extract.js?v=16";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview, pageCount } from "./extract.js?v=17";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
 import { EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=6";
 import { fillFromPath } from "./recheck.js?v=7";
@@ -57,6 +57,7 @@ if (CLOUD) {
       if (preview) await fs.setDoc(fs.doc(db, "previews", ref.id), { dataUrl: preview });
       return ref.id;
     },
+    me: () => auth.currentUser?.email || "",
     update: (id, rec) => fs.setDoc(fs.doc(db, "docs", id), { ...rec, updatedAt: fs.serverTimestamp(), updatedBy: auth.currentUser.email }, { merge: true }),
     async remove(id) {
       await fs.deleteDoc(fs.doc(db, "previews", id));
@@ -879,7 +880,9 @@ const inFlight = new Map();
 
 // Each file: read it, find the details, and save it straight away, marked for review when
 // anything is missing or doubtful. Only an exact copy of a file already in the system is skipped.
-async function processFile(file, path, batch) {
+// A PDF of several pages (a year of monthly invoices, say) may be a document per page: each page is read
+// alone and saved as its own record, named "<file> › עמוד 3 מתוך 12", with its own fingerprint.
+async function processFile(file, path, batch, page = null) {
   const el = document.createElement("div");
   el.className = "item";
   el.innerHTML = `<div class="thumb"><span class="soon">⏳</span></div>
@@ -900,6 +903,26 @@ async function processFile(file, path, batch) {
 
   let hash;
   try { hash = await fingerprint(file); } catch { hash = ""; }
+  if (page) {
+    if (hash) hash = `${hash}#p${page.no}`;
+    path = `${path} › עמוד ${page.no} מתוך ${page.of}`;
+    el.querySelector(".fname").textContent = path;
+  } else {
+    let pages = 1;
+    try { pages = await pageCount(file); } catch { /* read as one document */ }
+    if (pages > 1) {
+      if (await askSplit(el, show, pages, hash)) {
+        // this file's place in the progress goes to its pages
+        prog.share.delete(item);
+        prog.total--;
+        progStart(pages);
+        el.remove();
+        for (let p = 1; p <= pages; p++) processFile(file, path, batch, { no: p, of: pages });
+        return;
+      }
+      body.innerHTML = '<div class="status"><span class="label">ממתין…</span><div class="bar"><i></i></div></div>';
+    }
+  }
   // The same file again: one already in good order is skipped; one still waiting for review is read
   // again (the reading may do better now) and its record gets what the new reading finds.
   const existing = hash && !inFlight.get(hash) && records.find((r) => r.fileHash === hash);
@@ -925,7 +948,7 @@ async function processFile(file, path, batch) {
   // Read; a file that can't be read is still saved, so it can be opened and filled in by hand.
   let text = "", alt = "", preview = "", hint = "", failed = "";
   try {
-    ({ text, alt = "", preview, hint = "" } = await oneAtATime(() => readFile(file, status)));
+    ({ text, alt = "", preview, hint = "" } = await oneAtATime(() => readFile(file, status, page?.no || 0)));
   } catch (e) {
     failed = e.message || "שגיאה בקריאה";
   }
@@ -1011,6 +1034,17 @@ function renderDupWait() {
   $("dupWait").hidden = !dupWaiting;
   $("dupWait").textContent = `⚠️ ${dupWaiting === 1 ? "קובץ אחד כבר קיים" : `${dupWaiting} קבצים כבר קיימים`} במערכת ו${dupWaiting === 1 ? "ממתין" : "ממתינים"} לאישור שלך: לשמור או לא (מסומנים בצהוב ברשימה).`;
 }
+// A PDF of several pages: a document per page, or the whole file as one document.
+function askSplit(el, show, pages, hash) {
+  const whole = hash && records.find((r) => r.fileHash === hash);
+  show("dup ask", `📑 <b>יש בקובץ ${pages} עמודים. לרשום כל עמוד כמסמך נפרד?</b><br><small>מתאים לקובץ של כמה חשבוניות (למשל חשבונית לכל חודש): כל עמוד נקרא לבד ונרשם בשורה משלו ביומן.${whole ? " הקובץ כבר רשום במערכת כמסמך אחד: אחרי הפיצול אפשר למחוק את הרשומה הישנה." : ""}</small>`,
+    '<button class="primary split-it">📑 כל עמוד בנפרד</button><button class="ghost whole-it">📄 מסמך אחד</button>');
+  return new Promise((done) => {
+    el.querySelector(".split-it").onclick = () => done(true);
+    el.querySelector(".whole-it").onclick = () => done(false);
+  });
+}
+
 async function askKeepDuplicate(el, show, title, what, keepLabel = "💾 לשמור בכל זאת") {
   dupWaiting++;
   renderDupWait();
@@ -1106,7 +1140,14 @@ function fileType(r) {
   const file = (r.fileName || "").split(" › ")[0];
   return Object.keys(FILE_TYPES).find((k) => FILE_TYPES[k].re.test(file)) || "";
 }
-const typeTag = (r) => { const t = fileType(r); return t ? `<span class="ftype ft-${t}">${FILE_TYPES[t].label}</span> ` : ""; };
+// a page of a PDF split into a document per page, or a row of an Excel file
+const pageOf = (r) => (r.fileName || "").match(/ › עמוד (\d+) מתוך (\d+)$/);
+const isSheetRow = (r) => / › /.test(r.fileName || "") && !pageOf(r);
+const typeTag = (r) => {
+  const t = fileType(r), p = pageOf(r);
+  return (t ? `<span class="ftype ft-${t}">${FILE_TYPES[t].label}</span> ` : "")
+    + (p ? `<span class="ftype ft-page" title="עמוד ${p[1]} מתוך ${p[2]} בקובץ">עמ' ${p[1]}/${p[2]}</span> ` : "");
+};
 document.querySelector("th.sort").onclick = () => { sortDir = -sortDir; renderTable(); };
 
 function fillSelect(sel, values, allLabel) {
@@ -1296,7 +1337,7 @@ document.querySelector(".docs-split").hidden = docView === "gallery";
 function renderGallery(rows) {
   galleryWatch?.disconnect();
   $("gallery").innerHTML = rows.map((r) => `<div class="g-card${needsReview(r) ? " dup" : ""}${r.checked ? " checked" : ""}" data-id="${esc(r.id)}" tabindex="0">
-      <div class="g-pic" data-pic="${esc(r.id)}"><small class="soon">${/›/.test(r.fileName || "") ? "שורה מאקסל" : "טוען…"}</small></div>
+      <div class="g-pic" data-pic="${esc(r.id)}"><small class="soon">${isSheetRow(r) ? "שורה מאקסל" : "טוען…"}</small></div>
       <div class="g-info">
         <b>${typeTag(r)}${statusTag(r)}${esc(r.supplier) || `<span class="soon">${esc(r.fileName)}</span>`}</b>
         <small>${esc([showDate(r.date), r.category].filter(Boolean).join(" · "))}</small>
@@ -1309,7 +1350,7 @@ function renderGallery(rows) {
       const id = e.target.dataset.pic;
       previewOf(id).then((src) => {
         if (src) e.target.innerHTML = `<img src="${src}" alt="" loading="lazy">`;
-        else if (!/›/.test(records.find((x) => x.id === id)?.fileName || "")) e.target.innerHTML = '<small class="soon">אין תמונה</small>';
+        else if (!isSheetRow(records.find((x) => x.id === id) || {})) e.target.innerHTML = '<small class="soon">אין תמונה</small>';
       });
     }
   }, { rootMargin: "300px" });
@@ -1329,10 +1370,23 @@ $("gallery").addEventListener("keydown", (e) => {
 // journal, the documents' list and the gallery (a click turns it on or off).
 const tickBtn = (r) => `<button type="button" class="tick${r.checked ? " on" : ""}" data-tick="${esc(r.id)}"
   title="${r.checked ? "נבדק · לחיצה מבטלת" : "לא סומן כנבדק · לחיצה מסמנת"}" aria-pressed="${!!r.checked}">✓</button>`;
+// The last approval and the last save of a document, with date and time, for the top of its window.
+const dateTime = (t) => {
+  const d = t?.toDate ? t.toDate() : t ? new Date(t) : null;
+  return d && !isNaN(d) ? d.toLocaleString("he-IL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+};
+function handledNote(r) {
+  const ok = dateTime(r.checkedAt), saved = dateTime(r.updatedAt);
+  return (ok ? `✅ אושר לאחרונה: <b>${esc(ok)}</b>${r.checkedBy ? ` · ${esc(r.checkedBy)}` : ""}${r.checked ? "" : " (הסימון בוטל אחר כך)"}`
+    : '<span class="soon">⏳ טרם אושר</span>')
+    + (saved ? ` <span class="soon">· נשמר לאחרונה: ${esc(saved)}${r.updatedBy ? ` · ${esc(r.updatedBy)}` : ""}</span>` : "");
+}
+// When and by whom a document was last approved (its tick turned on).
+const approvedNow = () => ({ checkedAt: Date.now(), checkedBy: store.me?.() || "" });
 async function toggleTick(id) {
   const r = records.find((x) => x.id === id);
   if (!r) return;
-  try { await store.update(id, { checked: !r.checked }); }
+  try { await store.update(id, r.checked ? { checked: false } : { checked: true, ...approvedNow() }); }
   catch (err) { toast("השמירה נכשלה: " + err.message); }
 }
 // one listener for every list with ticks
@@ -1381,7 +1435,7 @@ async function showSide(id) {
   if (current !== id) return;
   $("sideImg").innerHTML = src
     ? `<img src="${src}" alt="המסמך" title="לחיצה מגדילה">`
-    : `<p class="soon">אין תמונה של המסמך${/›/.test(r.fileName) ? " (שורה מקובץ אקסל)" : ""}.</p>`;
+    : `<p class="soon">אין תמונה של המסמך${isSheetRow(r) ? " (שורה מקובץ אקסל)" : ""}.</p>`;
   const img = $("sideImg").querySelector("img");
   if (img) img.onclick = () => zoom(src);
   // The next one is likely to be looked at next: fetch it ahead.
@@ -1417,6 +1471,7 @@ async function openEntry(id, fallback, plain = false) {
   bindFields(box);
   const why = [r.reviewWhy, dupOf.get(id) && `ייתכן כפילות: ${dupOf.get(id)}`].filter(Boolean).join(" · ");
   $("dlgTitle").textContent = r.status === "failed" ? "מסמך שלא נקרא: מלאו ידנית" : needsReview(r) ? "מסמך לבדיקה" : "עריכת מסמך";
+  $("dlgDone").innerHTML = handledNote(r);
   $("dlgWhy").hidden = !why;
   $("dlgWhy").textContent = why ? `⚠️ ${why}` : "";
   $("dlgFileName").textContent = r.fileName || "";
@@ -1700,6 +1755,7 @@ async function saveEntry(approve) {
   rec.status = why.length ? "review" : "ok";
   // "שמירה ואישור" ticks it as checked; a plain save keeps the tick it had
   rec.checked = approve || !!before?.checked;
+  if (approve) Object.assign(rec, approvedNow());
   rec.reviewWhy = why.join(" · ");
   try {
     const id = editing;
@@ -1761,7 +1817,7 @@ async function applyToDocs(ids, change) {
   for (const xid of ids) {
     const x = records.find((r) => r.id === xid);
     if (!x) continue;
-    const upd = { ...change(x), checked: true };
+    const upd = { ...change(x), checked: true, ...approvedNow() };
     if (x.status === "review") {
       const why = reviewReasons({ ...x, ...upd }, { exceptId: x.id, noText: (x.reviewWhy || "").includes("לא נמצא טקסט") });
       Object.assign(upd, { status: why.length ? "review" : "ok", reviewWhy: why.join(" · ") });
@@ -1873,7 +1929,7 @@ async function compareSide(box, r, title) {
   if (box.dataset.id !== r.id) return;
   const frame = box.querySelector(".pic-frame");
   frame.innerHTML = src ? `<img src="${src}" alt="" draggable="false">`
-    : `<p class="soon">אין תמונה של המסמך${/›/.test(r.fileName) ? " (שורה מקובץ אקסל)" : ""}.</p>`;
+    : `<p class="soon">אין תמונה של המסמך${isSheetRow(r) ? " (שורה מקובץ אקסל)" : ""}.</p>`;
   const img = frame.querySelector("img");
   if (!img) return;
   let k = 1;

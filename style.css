@@ -535,3 +535,9 @@ body.dragging-misc #sideNav > button[data-view="docs"], body.dragging-misc #side
 input[type="number"]:not([name="pct"]) { -moz-appearance: textfield; appearance: textfield; }
 input[type="number"]:not([name="pct"])::-webkit-inner-spin-button,
 input[type="number"]:not([name="pct"])::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* a page of a PDF that was split into a document per page */
+.ftype.ft-page { background: rgba(255, 211, 77, .18); color: #ffd34d; }
+
+/* the last approval and save, under the document window's title */
+.dlg-done { margin: -6px 0 12px; font-size: 13px; }

@@ -76,9 +76,10 @@ function kindOf(file) {
 }
 
 // -> { text, preview (small JPEG data URL), ocr (bool) }. onProgress(0..1, label).
-export async function readFile(file, onProgress = () => {}) {
+// With a page number, only that page of a PDF is read (a file of many invoices, a document per page).
+export async function readFile(file, onProgress = () => {}, page = 0) {
   switch (kindOf(file)) {
-    case "pdf": return readPdf(file, onProgress);
+    case "pdf": return readPdf(file, onProgress, page);
     case "heic": return readHeic(file, onProgress);
     case "tiff": return readTiff(file, onProgress);
     case "docx": return readDocx(file, onProgress);
@@ -154,27 +155,38 @@ function textPreview(text) {
   return toPreview(c);
 }
 
-async function readPdf(file, onProgress) {
+// The number of pages of a PDF; 1 for any other file.
+export async function pageCount(file) {
+  if (kindOf(file) !== "pdf") return 1;
+  const lib = await pdfjs();
+  const pdf = await lib.getDocument({ data: await file.arrayBuffer() }).promise;
+  const n = pdf.numPages;
+  pdf.destroy();
+  return n;
+}
+
+async function readPdf(file, onProgress, only = 0) {
   onProgress(0.05, "פותח את ה-PDF…");
   const lib = await pdfjs();
   const pdf = await lib.getDocument({ data: await file.arrayBuffer() }).promise;
-  const pages = Math.min(pdf.numPages, 3);
+  // the first three pages, or the one page asked for
+  const from = only || 1, pages = only ? 1 : Math.min(pdf.numPages, 3);
   const lines = [];
-  for (let p = 1; p <= pages; p++) {
+  for (let p = from; p < from + pages; p++) {
     const page = await pdf.getPage(p);
     lines.push(...pdfLines((await page.getTextContent()).items));
   }
-  const first = await renderPage(await pdf.getPage(1), 1100);
+  const first = await renderPage(await pdf.getPage(from), 1100);
   const preview = toPreview(first);
   let text = fixVisualOrder(lines).join("\n");
   // A scan saved as PDF has (almost) no text: read the page pictures instead.
   if (text.replace(/[^\p{L}\d]/gu, "").length < 40) {
     const parts = [];
     let firstPage = null;
-    for (let p = 1; p <= pages; p++) {
+    for (let p = from; p < from + pages; p++) {
       const canvas = await renderPage(await pdf.getPage(p), 2200);
-      if (p === 1) firstPage = canvas;
-      parts.push(await ocr(canvas, (x) => onProgress(0.1 + 0.8 * ((p - 1 + x) / pages), `מזהה טקסט בעמוד ${p}…`)));
+      if (p === from) firstPage = canvas;
+      parts.push(await ocr(canvas, (x) => onProgress(0.1 + 0.8 * ((p - from + x) / pages), `מזהה טקסט בעמוד ${p}…`)));
     }
     const scanned = parts.join("\n");
     return { text: scanned, alt: await secondReading(firstPage, scanned, onProgress), preview, ocr: true };
@@ -184,7 +196,7 @@ async function readPdf(file, onProgress) {
   let hint = "";
   if (!findCategory(text, "")) {
     try {
-      const page = await renderPage(await pdf.getPage(1), 2200);
+      const page = await renderPage(await pdf.getPage(from), 2200);
       const top = document.createElement("canvas");
       top.width = page.width;
       top.height = Math.round(page.height * 0.3);
