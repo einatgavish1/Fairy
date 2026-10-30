@@ -2300,18 +2300,9 @@ function writeJournal(lines, fileName, { prColumn = false } = {}) {
   XLSX.utils.book_append_sheet(wb, ws, "פקודות יומן");
   XLSX.writeFile(wb, fileName);
 }
-// For checking: every line shown, nothing marked.
-$("jExport").onclick = () => {
-  const lines = journalLines();
-  if (!lines.length) { toast("אין מה לייצא"); return; }
-  const who = client && client !== ALL ? `${client} ` : "";
-  writeJournal(lines, `פקודות יומן ${who}${$("jYear").value || "כל השנים"}.xlsx`, { prColumn: true });
-};
-
 // ---------- export to Priority ----------
-// Only what did not go to Priority yet, so loading it there never doubles a line. Each document exported is
-// marked with the time of its export (the batch) and what it said then: one changed afterwards is shown as
-// such, to fix in Priority too, and is not exported again by itself.
+// Each document exported is marked with the time of its export (the batch) and what it said then: one
+// changed afterwards is shown as such, to fix in Priority too, and is not exported again by itself.
 const prSnap = (r) => [r.date, r.amount, r.vat, accountOf(r), r.docNo, r.supplier].map((v) => v ?? "").join("|");
 const prChanged = (r) => !!r.prExport && r.prSnap !== prSnap(r);
 const prTag = (r) => (!r.prExport ? ""
@@ -2326,62 +2317,63 @@ async function markExported(docs, batch) {
   }
   return n;
 }
-$("prExport").onclick = async () => {
-  const who = prWho();
-  if (!who) { toast("בחרו לקוח: הייצוא לפריוריטי הוא של לקוח אחד"); return; }
-  // every year of the client, whatever is shown
-  const all = yearLines("");
-  const waiting = all.filter((l) => !l.r.prExport);
-  const ready = waiting.filter((l) => !needsReview(l.r));
-  const review = new Set(waiting.filter((l) => needsReview(l.r)).map((l) => l.r.id)).size;
-  const done = new Set(all.filter((l) => l.r.prExport).map((l) => l.r.id)).size;
-  if (!ready.length) { toast(review ? `אין שורות חדשות לייצוא: ${review} מסמכים עוד מחכים לבדיקה` : "אין שורות חדשות לייצוא: הכול כבר יוצא לפריוריטי"); return; }
-  const docs = [...new Map(ready.map((l) => [l.r.id, l.r])).values()];
-  if (!confirm(`לייצא לפריוריטי ${ready.length} שורות חדשות (${docs.length} מסמכים) של ${who}?`
-    + `${done ? `\n${done} מסמכים כבר יוצאו בעבר ולא ייכללו.` : ""}`
-    + `${review ? `\n${review} מסמכים שמחכים לבדיקה לא ייכללו עד שיאושרו.` : ""}`
-    + "\n\nאחרי הייצוא השורות יסומנו כמיוצאות.")) return;
-  const batch = Date.now();
-  writeJournal(sortLines(ready), `פריוריטי ${who} ${stamp(batch)}.xlsx`);
-  const n = await markExported(docs, batch);
-  toast(`יוצאו ${ready.length} שורות וסומנו ${n} מסמכים כמיוצאים לפריוריטי`);
-};
-// More: a batch again (when loading it into Priority failed), and marking what went to Priority before.
-function fillPrMore() {
-  const who = prWho();
-  const batches = new Map();
-  for (const r of records) if (inScope(r) && !isDonationDoc(r) && r.prExport) batches.set(r.prExport, (batches.get(r.prExport) || 0) + 1);
-  $("prMore").innerHTML = '<option value="">עוד…</option>'
-    + [...batches].sort((a, b) => b[0] - a[0]).slice(0, 30).map(([t, n]) => `<option value="${t}">↻ ייצוא חוזר: ${esc(dateTime(t))} · ${n} מסמכים</option>`).join("")
-    + (who ? '<option value="old">✔️ סימון מסמכים שכבר הועברו כמיוצאים…</option>' : "");
+// ---------- the Excel exports (one button, three kinds) ----------
+// "אקסל שוטף": every line shown, for checking; nothing marked.
+// "Priority": every document of the client, to load into Priority; all are marked as exported.
+// "עדכון ל Priority": only the documents not exported yet (added since), marked in turn.
+// Before an export to Priority, a warning when some documents have no green tick.
+function xlCurrent() {
+  const lines = journalLines();
+  if (!lines.length) { toast("אין מה לייצא"); return; }
+  const who = client && client !== ALL ? `${client} ` : "";
+  writeJournal(lines, `פקודות יומן ${who}${$("jYear").value || "כל השנים"}.xlsx`, { prColumn: true });
 }
-$("prMore").addEventListener("focus", fillPrMore);
-$("prMore").addEventListener("pointerdown", fillPrMore);
-$("prMore").addEventListener("change", async () => {
-  const v = $("prMore").value;
-  $("prMore").value = "";
+async function xlPriority(onlyNew) {
   const who = prWho();
-  if (v === "old") {
-    const ans = prompt(`סימון המסמכים של ${who} שכבר הועברו לפריוריטי, כדי שלא ייצאו שוב.\nעד איזה תאריך (כולל)? לדוגמה 30/09/2026`);
-    const m = (ans || "").trim().match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/);
-    if (!ans) return;
-    if (!m) { toast("התאריך לא הובן. כתבו אותו כמו 30/09/2026"); return; }
-    const iso = `${m[3].length === 2 ? "20" + m[3] : m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-    const docs = [...new Map(yearLines("").filter((l) => !l.r.prExport && l.date && l.date <= iso).map((l) => [l.r.id, l.r])).values()];
-    if (!docs.length) { toast(`אין מסמכים לא מיוצאים עד ${showDate(iso)}`); return; }
-    if (!confirm(`לסמן ${docs.length} מסמכים של ${who} עד ${showDate(iso)} כאילו כבר יוצאו לפריוריטי? הם לא ייכללו בייצוא הבא.`)) return;
-    const n = await markExported(docs, Date.now());
-    toast(`${n} מסמכים סומנו כמיוצאים לפריוריטי`);
-    return;
-  }
-  if (!v) return;
-  // the same batch again, as it is now; nothing is marked anew
-  const batch = +v;
-  const lines = yearLines("").filter((l) => l.r.prExport === batch);
-  if (!lines.length) { toast("לא נמצאו שורות בקבוצה הזו"); return; }
-  writeJournal(sortLines(lines), `פריוריטי ${who ? who + " " : ""}${stamp(batch)} (ייצוא חוזר).xlsx`);
-  toast(`הקבוצה מ-${dateTime(batch)} יוצאה שוב: ${lines.length} שורות`);
+  if (!who) { toast("בחרו לקוח: הייצוא ל-Priority הוא של לקוח אחד"); return; }
+  // every year of the client, whatever is shown
+  const lines = yearLines("").filter((l) => !onlyNew || !l.r.prExport);
+  if (!lines.length) { toast(onlyNew ? "אין מסמכים חדשים מאז הייצוא האחרון ל-Priority" : "אין מה לייצא"); return; }
+  const docs = [...new Map(lines.map((l) => [l.r.id, l.r])).values()];
+  const unticked = docs.filter((r) => !r.checked).length;
+  const before = onlyNew ? 0 : docs.filter((r) => r.prExport).length;
+  if (!confirm(`${onlyNew ? "עדכון ל-Priority" : "ייצוא ל-Priority"}: ${lines.length} שורות (${docs.length} מסמכים) של ${who}.`
+    + (unticked ? `\n\n⚠️ אזהרה: ${unticked} מסמכים בלי וי ירוק (לא נבדקו). לייצא בכל זאת?` : "")
+    + (before ? `\n\n${before} מהמסמכים כבר יוצאו בעבר ל-Priority: טעינה שלהם שוב תכפיל אותם שם.` : "")
+    + "\n\nאחרי הייצוא המסמכים יסומנו כמיוצאים.")) return;
+  const batch = Date.now();
+  writeJournal(sortLines(lines), `${onlyNew ? "עדכון Priority" : "Priority"} ${who} ${stamp(batch)}.xlsx`);
+  const n = await markExported(docs, batch);
+  toast(`יוצאו ${lines.length} שורות וסומנו ${n} מסמכים כמיוצאים ל-Priority`);
+}
+// The menu: the update shows how many new documents there are, and looks different when there are none.
+function fillXlMenu() {
+  const who = prWho();
+  const fresh = who ? new Set(yearLines("").filter((l) => !l.r.prExport).map((l) => l.r.id)).size : 0;
+  const upd = $("xlMenu").querySelector("[data-xl=update]");
+  upd.classList.toggle("none", !fresh);
+  upd.querySelector("small").textContent = !who ? "בחרו לקוח" : fresh ? `${fresh} מסמכים חדשים` : "אין מסמכים חדשים";
+  $("xlMenu").querySelector("[data-xl=priority] small").textContent = who ? "כל המסמכים של הלקוח" : "בחרו לקוח";
+}
+$("xlBtn").onclick = (e) => {
+  e.stopPropagation();
+  const open = $("xlMenu").hidden;
+  if (open) fillXlMenu();
+  $("xlMenu").hidden = !open;
+  $("xlBtn").setAttribute("aria-expanded", String(open));
+};
+document.addEventListener("click", (e) => {
+  if (!$("xlMenu").hidden && !e.target.closest("#xlMenu")) { $("xlMenu").hidden = true; $("xlBtn").setAttribute("aria-expanded", "false"); }
 });
+$("xlMenu").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-xl]");
+  if (!b) return;
+  $("xlMenu").hidden = true;
+  $("xlBtn").setAttribute("aria-expanded", "false");
+  if (b.dataset.xl === "current") xlCurrent();
+  else xlPriority(b.dataset.xl === "update");
+});
+
 // A click on the mark: it was not exported after all (or the fix was made in Priority).
 $("jRows").addEventListener("click", async (e) => {
   const tag = e.target.closest("[data-pr]");

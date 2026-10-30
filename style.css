@@ -549,4 +549,15 @@ input[type="number"]:not([name="pct"])::-webkit-outer-spin-button { -webkit-appe
 /* exported to Priority, and changed after it */
 .tag.pr { cursor: pointer; font: inherit; background: none; padding: 0 5px; border-color: rgba(140, 220, 160, .7); }
 .tag.pr.changed { border-color: #ffcc00; color: #ffcc00; animation: review-blink 1.2s ease-in-out infinite; }
-#prMore { max-width: 170px; }
+
+/* the Excel button's menu: three exports, each its colour */
+.xl-wrap { position: relative; display: inline-block; }
+.xl-menu { position: absolute; top: calc(100% + 6px); inset-inline-end: 0; z-index: 20; min-width: 230px; display: grid; gap: 6px;
+  padding: 8px; border-radius: 12px; background: #1b2a4a; box-shadow: 0 12px 30px rgba(0, 0, 0, .45); }
+.xl-menu button { display: grid; gap: 2px; text-align: start; padding: 10px 14px; border: 0; border-radius: 9px; font: inherit; font-weight: 700; color: #1b2a4a; cursor: pointer; }
+.xl-menu button small { font-weight: 400; font-size: 12px; opacity: .8; }
+.xl-menu .xl-current { background: #ffb3b3; }
+.xl-menu .xl-update { background: #ffe9a3; }
+.xl-menu .xl-priority { background: #b8ecc4; }
+.xl-menu .xl-update.none { background: #c9ced8; color: #5b6475; }
+.xl-menu button:hover { filter: brightness(1.06); }
