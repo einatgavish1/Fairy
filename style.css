@@ -561,3 +561,21 @@ input[type="number"]:not([name="pct"])::-webkit-outer-spin-button { -webkit-appe
 .xl-menu .xl-priority { background: #b8ecc4; }
 .xl-menu .xl-update.none { background: #c9ced8; color: #5b6475; }
 .xl-menu button:hover { filter: brightness(1.06); }
+
+/* income: its window, its mark in the journal; form 106 in the other documents */
+.income-dlg { width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
+.income-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.income-pic { max-height: 80vh; overflow: auto; background: #fff; border-radius: 10px; }
+.income-pic img { width: 100%; display: block; }
+.income-pic .soon { padding: 16px; color: #555; }
+.income-dlg .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.income-dlg .fields label { display: grid; gap: 4px; }
+.income-dlg .fields .wide { grid-column: 1 / -1; }
+.income-dlg .dlg-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; align-items: center; }
+.income-dlg .grow { flex: 1; }
+@media (max-width: 760px) { .income-grid { grid-template-columns: 1fr; } .income-pic { max-height: 40vh; } }
+.tag.income { border-color: rgba(140, 220, 160, .8); color: #c8f2d3; }
+.sum-106 { margin: 10px 0; padding: 10px 14px; border-radius: 10px; background: rgba(255, 255, 255, .08); }
+.f106-box { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
+.f106 { display: grid; gap: 2px; font-size: 12px; }
+.f106 input { padding: 4px 8px; min-width: 0; }

@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=44">
+<link rel="stylesheet" href="style.css?v=45">
 </head>
 <body>
 
@@ -68,6 +68,7 @@
     <label class="cur-client"><small>לקוח</small><select id="navClient"></select></label>
     <button data-view="upload" class="active">📥 קליטת מסמכים</button>
     <button data-view="docs">📋 מסמכי הוצאות <span class="nav-badge" id="reviewBadge" hidden></span></button>
+    <button data-view="income">💰 מסמכי הכנסות <span class="nav-badge" id="incomeBadge" hidden></span></button>
     <button data-view="journal">📒 פקודות יומן</button>
     <button data-view="donations">💝 תרומות</button>
     <button data-view="filing">📄 דוח להגשה</button>
@@ -230,6 +231,8 @@
         <option value="hand">חשבון שנבחר ביד</option>
         <option value="checked">✓ נבדקו</option>
         <option value="unchecked">עוד לא נבדקו</option>
+        <option value="expense">הוצאות בלבד</option>
+        <option value="income">💰 הכנסות בלבד</option>
         <option value="pr-no">📤 לא יוצאו לפריוריטי</option>
         <option value="pr-yes">📤 יוצאו לפריוריטי</option>
         <option value="pr-changed">⚠️ שונו אחרי הייצוא</option>
@@ -308,6 +311,34 @@
   </main>
 
   <!-- Other documents of the client (a rent contract, form 106...): kept with the client, not expenses. -->
+  <!-- The invoices and receipts the client issued: apart from the expenses, into the same journal. -->
+  <main class="panel view-panel" data-view="income">
+    <div class="panel-head">
+      <h2>💰 מסמכי הכנסות <span class="page-client" id="pageClient8"></span></h2>
+      <div class="head-actions">
+        <select id="iYear" title="שנה"></select>
+        <button class="ghost" id="iAdd">➕ הכנסה ידנית</button>
+      </div>
+    </div>
+    <p class="hint">חשבוניות וקבלות שהלקוח הוציא. כל מסמך נרשם בפקודות היומן: חובה 107000, וזכות לחשבון ההכנסה. בעוסק מורשה המע״מ נרשם בנפרד על 205001 (מע״מ עסקאות). לחיצה על שורה פותחת את המסמך.</p>
+    <div class="drop drop-small" id="iDrop">
+      <input type="file" id="iFile" accept="application/pdf,image/*,.heic,.heif,.tif,.tiff,.jfif,.docx" multiple hidden>
+      <span class="drop-icon" aria-hidden="true">💰</span>
+      <b>גוררים לכאן מסמכי הכנסה, או</b>
+      <button type="button" class="primary" id="iPick">📄 בחירת קבצים</button>
+    </div>
+    <div id="iQueue"></div>
+    <div class="toolbar"><input type="search" id="iSearch" placeholder="חיפוש משלם, מספר מסמך, סכום…"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>✓</th><th>תאריך</th><th>משלם</th><th>סוג מסמך</th><th>מספר</th><th>סכום כולל מע״מ</th><th>מע״מ</th><th>חשבון</th><th></th></tr></thead>
+        <tbody id="iRows"></tbody>
+        <tfoot><tr><td colspan="5" id="iShown"></td><td class="num" id="iSum"></td><td class="num" id="iVat"></td><td colspan="2"></td></tr></tfoot>
+      </table>
+    </div>
+    <p class="empty" id="iEmpty" hidden>עוד אין מסמכי הכנסה.</p>
+  </main>
+
   <main class="panel view-panel" data-view="misc">
     <div class="panel-head">
       <h2>🗂️ מסמכים שונים <span class="page-client" id="pageClient7"></span></h2>
@@ -326,6 +357,7 @@
         <button type="button" class="primary" id="mPick">📄 בחירת קבצים</button>
       </div>
       <div id="mQueue"></div>
+      <div class="sum-106" id="m106Sum" hidden></div>
       <div class="gallery misc-list" id="mList"></div>
       <p class="empty" id="mEmpty" hidden>עוד אין מסמכים שונים ללקוח הזה.</p>
     </div>
@@ -344,6 +376,29 @@
 </div>
 
 <datalist id="catList"></datalist>
+
+<!-- An income document: its picture and its details. -->
+<dialog id="incomeDlg" class="income-dlg">
+  <form method="dialog" id="iForm">
+    <div class="income-grid">
+      <div class="income-pic" id="iPic"></div>
+      <div>
+        <h2 id="iTitle">מסמך הכנסה</h2>
+        <p class="dlg-done" id="iDone"></p>
+        <p class="dup-warn" id="iWhy" hidden></p>
+        <div class="fields" id="iFields"></div>
+        <div class="dlg-actions">
+          <button type="button" class="danger" id="iDelete">מחיקה</button>
+          <button type="button" class="ghost" id="iWhole">📄 כל הקובץ</button>
+          <span class="grow"></span>
+          <button type="button" class="ghost" id="iCancel">ביטול</button>
+          <button type="button" class="ghost" id="iSave">💾 שמירה</button>
+          <button type="button" class="primary" id="iApprove">✅ שמירה ואישור</button>
+        </div>
+      </div>
+    </div>
+  </form>
+</dialog>
 
 <dialog id="entryDlg" class="entry-dlg">
   <form method="dialog" id="entryForm">
@@ -444,6 +499,6 @@
 <div id="toast" popover="manual" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=64"></script>
+<script type="module" src="app.js?v=65"></script>
 </body>
 </html>

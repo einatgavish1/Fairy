@@ -1,7 +1,7 @@
 import { firebaseConfig, OWNER_EMAILS, AI_READING } from "./firebase-config.js?v=2";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview, pageCount } from "./extract.js?v=17";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview, pageCount, parse106 } from "./extract.js?v=19";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
-import { EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=6";
+import { ACCOUNTS, EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=6";
 import { fillFromPath } from "./recheck.js?v=7";
 import { parseComparative, comparativeFromDocs, buildFiling, filingSheet, comparativeSheet, lineOf } from "./report.js?v=3";
 
@@ -138,6 +138,7 @@ let user = null, records = [], clients = [], unsub = null, unsubClients = null;
 // The client's other documents (kind "misc": a rent contract, form 106...) are kept apart from the expense
 // documents, so nothing that works on expenses ever sees them.
 let miscDocs = [];
+let incomeDocs = []; // the invoices and receipts the client issued (kind "income"), apart from the expenses
 // The client being worked on; ALL shows everyone's documents together.
 const ALL = "*";
 let client = null;
@@ -161,8 +162,9 @@ function enterApp() {
     ? `לחשבון ${user.email} אין הרשאה. בקשו מהבעלים לשתף אתכם.`
     : "שגיאה בטעינת הנתונים: " + err.message);
   unsub = store.watch((all) => {
-    records = all.filter((r) => r.kind !== "misc");
+    records = all.filter((r) => r.kind !== "misc" && r.kind !== "income");
     miscDocs = all.filter((r) => r.kind === "misc");
+    incomeDocs = all.filter((r) => r.kind === "income");
     renderAll();
   }, denied);
   unsubClients = store.watchClients((all) => { clients = all; renderAll(); }, denied);
@@ -385,7 +387,7 @@ function chooseClient(name) {
   try { localStorage.setItem("fairy-last-client", name); } catch {}
   const all = name === ALL;
   const title = all ? "" : `· ${name || "לא שויכו ללקוח"}`;
-  for (const id of ["pageClient", "pageClient2", "pageClient3", "pageClient4", "pageClient5", "pageClient6", "pageClient7"]) $(id).textContent = title;
+  for (const id of ["pageClient", "pageClient2", "pageClient3", "pageClient4", "pageClient5", "pageClient6", "pageClient7", "pageClient8"]) $(id).textContent = title;
   loadFiling();
   $("clientPick").hidden = !all;
   $("clientFixed").hidden = all;
@@ -1251,6 +1253,7 @@ function renderAll() {
   renderJournal();
   renderDonations();
   renderMisc();
+  renderIncome();
 }
 
 // id -> why it looks like another saved record. Recomputed whenever the records change.
@@ -1446,7 +1449,7 @@ function handledNote(r) {
 // When and by whom a document was last approved (its tick turned on).
 const approvedNow = () => ({ checkedAt: Date.now(), checkedBy: store.me?.() || "" });
 async function toggleTick(id) {
-  const r = records.find((x) => x.id === id);
+  const r = anyDoc(id);
   if (!r) return;
   try { await store.update(id, r.checked ? { checked: false } : { checked: true, ...approvedNow() }); }
   catch (err) { toast("השמירה נכשלה: " + err.message); }
@@ -2099,9 +2102,22 @@ const balanceDate = (iso, year) => (iso && year && iso < `${year}-01-01` ? `${ye
 // The year's lines, before the filters. For a licensed dealer (עוסק מורשה) a document with VAT is two
 // lines: the expense without the VAT, and the VAT on the input-VAT account (מע"מ תשומות, 205002).
 const VAT_ACCOUNT = "205002";
+const SALES_VAT_ACCOUNT = "205001";
 function yearLines(year = $("jYear").value) {
-  return records.filter((r) => inScope(r) && !isDonationDoc(r) && (!year || (r.date || "").startsWith(year)))
-    .sort((a, b) => (a.date || "").localeCompare(b.date || ""))
+  const inYear = (r) => inScope(r) && (!year || (r.date || "").startsWith(year));
+  // income: the owner's account is debited, the income account credited, and for a licensed dealer the VAT
+  // goes to מע"מ עסקאות (205001)
+  const income = incomeDocs.filter(inYear).flatMap((r) => {
+    const line = {
+      r, income: true, date: r.date || "", balance: balanceDate(r.date || "", year),
+      details: (r.customer || r.details || r.fileName || "").replace(/\s+/g, " ").trim().slice(0, 24),
+      debit: OWNER_ACCOUNT, credit: incomeAccount(r), amount: r.amount || 0, ref: r.docNo || "",
+    };
+    const vat = r.vat || 0;
+    if (dealerOf(r.client, r.date) !== "licensed" || !vat || vat >= line.amount) return [line];
+    return [{ ...line, amount: round2(line.amount - vat) }, { ...line, credit: SALES_VAT_ACCOUNT, amount: vat, vatLine: true }];
+  });
+  return records.filter((r) => inYear(r) && !isDonationDoc(r))
     .flatMap((r) => {
       const line = {
         r, date: r.date || "", balance: balanceDate(r.date || "", year),
@@ -2111,15 +2127,17 @@ function yearLines(year = $("jYear").value) {
       const vat = r.vat || 0;
       if (dealerOf(r.client, r.date) !== "licensed" || !vat || vat >= line.amount) return [line];
       return [{ ...line, amount: round2(line.amount - vat) }, { ...line, debit: VAT_ACCOUNT, amount: vat, vatLine: true }];
-    });
+    }).concat(income).sort((a, b) => a.date.localeCompare(b.date));
 }
+// The account a line is about: the expense debited, or the income credited.
+const lineAccount = (l) => (l.income ? l.credit : l.debit);
 
 const J_FILTERS = ["jSearch", "jMonth", "jAcc", "jStatus", "jMin", "jMax"];
 // A click on a heading sorts by its column; again, the other way round.
 let jSort = { key: "date", dir: 1 };
 const J_SORT = {
   date: (l) => l.date, details: (l) => l.details, debit: (l) => +l.debit, credit: (l) => +l.credit,
-  amount: (l) => l.amount, ref: (l) => (/^\d+$/.test(l.ref) ? +l.ref : l.ref), accName: (l) => accountName(l.debit),
+  amount: (l) => l.amount, ref: (l) => (/^\d+$/.test(l.ref) ? +l.ref : l.ref), accName: (l) => accountName(lineAccount(l)),
   checked: (l) => (l.r.checked ? 1 : 0),
 };
 function sortLines(lines) {
@@ -2146,7 +2164,9 @@ function journalLines(base = yearLines()) {
   const min = $("jMin").value === "" ? null : +$("jMin").value, max = $("jMax").value === "" ? null : +$("jMax").value;
   const shown = base.filter((l) => {
     if (month && l.date.slice(5, 7) !== month) return false;
-    if (acc && l.debit !== acc) return false;
+    if (acc && lineAccount(l) !== acc) return false;
+    if (status === "income" && !l.income) return false;
+    if (status === "expense" && l.income) return false;
     if (status === "review" && !needsReview(l.r)) return false;
     if (status === "ok" && needsReview(l.r)) return false;
     if (status === "hand" && !byHand(l.r)) return false;
@@ -2159,7 +2179,7 @@ function journalLines(base = yearLines()) {
     if (min != null && l.amount < min) return false;
     if (max != null && l.amount > max) return false;
     if (q) {
-      const hay = [l.r.supplier, l.r.details, l.r.fileName, l.ref, l.debit, accountName(l.debit), String(l.amount), jDate(l.date)].join(" ").toLowerCase();
+      const hay = [l.r.supplier, l.r.customer, l.r.details, l.r.fileName, l.ref, lineAccount(l), accountName(lineAccount(l)), String(l.amount), jDate(l.date)].join(" ").toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -2187,25 +2207,27 @@ function renderJournal() {
   const base = yearLines();
   const months = [...new Set(base.map((l) => l.date.slice(5, 7)).filter(Boolean))].sort();
   fillPairs("jMonth", [["", "כל החודשים"], ...months.map((m) => [m, J_MONTHS[+m - 1] || m])]);
-  const accs = [...new Set(base.map((l) => l.debit).filter(Boolean))].sort();
+  const accs = [...new Set(base.map(lineAccount).filter(Boolean))].sort();
   fillPairs("jAcc", [["", "כל החשבונות"], ...accs.map((a) => [a, `${a} · ${accountName(a)}`])]);
   const lines = journalLines(base);
   const filtered = J_FILTERS.some((id) => $(id).value !== "");
   $("jClear").hidden = !filtered;
   const sum = lines.reduce((s, l) => s + l.amount, 0);
   $("jShown").textContent = filtered ? `מוצגות ${lines.length} מתוך ${base.length} שורות` : `${lines.length} שורות`;
-  $("jSum").textContent = sum.toLocaleString("he-IL", { maximumFractionDigits: 2 });
+  const incomeSum = lines.filter((l) => l.income).reduce((x, l) => x + l.amount, 0);
+  const shown = (n) => n.toLocaleString("he-IL", { maximumFractionDigits: 2 });
+  $("jSum").textContent = incomeSum ? `הוצאות ${shown(sum - incomeSum)} · הכנסות ${shown(incomeSum)}` : shown(sum);
   // the VAT line of a licensed dealer's document has its fixed account, not one to pick
-  const acc = (l, inner, cls) => (l.vatLine ? inner : pickable(l, inner, cls));
+  const acc = (l, inner, cls) => (l.vatLine || l.income ? inner : pickable(l, inner, cls));
   $("jRows").innerHTML = lines.map((l) => `<tr data-id="${esc(l.r.id)}" class="${needsReview(l.r) ? "dup" : ""}${l.vatLine ? " vat-line" : ""}">
       <td class="tick-cell">${l.vatLine ? "" : tickBtn(l.r)}</td>
       <td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.date)}</td><td class="num">${jDate(l.balance)}</td>
-      <td>${needsReview(l.r) && !l.vatLine ? '<span title="מסמך לבדיקה">⚠️</span> ' : ""}${foreign(l.r) ? `<span class="tag fx" title="${esc(fxNote(l.r))}">${FX[l.r.currency].sign} ${esc(l.r.currency)}</span> ` : ""}${l.vatLine ? "" : prTag(l.r)}${esc(l.details)}</td>
+      <td>${needsReview(l.r) && !l.vatLine ? '<span title="מסמך לבדיקה">⚠️</span> ' : ""}${foreign(l.r) ? `<span class="tag fx" title="${esc(fxNote(l.r))}">${FX[l.r.currency].sign} ${esc(l.r.currency)}</span> ` : ""}${l.income ? '<span class="tag income">💰 הכנסה</span> ' : ""}${l.vatLine ? "" : prTag(l.r)}${esc(l.details)}</td>
       <td class="num">${acc(l, esc(l.debit), "acc-code")}</td>
       <td class="num">${l.credit}</td>
       <td class="num">${l.amount.toLocaleString("he-IL", { maximumFractionDigits: 2 })}</td>
       <td class="num">${esc(l.ref)}</td>
-      <td>${acc(l, esc(accountName(l.debit)), "acc-name")}</td></tr>`).join("");
+      <td>${acc(l, esc(accountName(lineAccount(l))), "acc-name")}</td></tr>`).join("");
   $("jEmpty").hidden = lines.length > 0;
   document.querySelectorAll("#jHead [data-jsort]").forEach((th) => {
     th.querySelector(".arrow")?.remove();
@@ -2268,7 +2290,7 @@ $("jRows").addEventListener("click", (e) => {
   }
   if (e.target.closest("select")) return;
   const tr = e.target.closest("tr[data-id]");
-  if (tr) openEntry(tr.dataset.id);
+  if (tr) (incomeDocs.some((r) => r.id === tr.dataset.id) ? openIncome(tr.dataset.id) : openEntry(tr.dataset.id));
 });
 
 // The same lines as an Excel sheet, laid out like the workbook: real dates shown as dd/mm/yy (always with slashes),
@@ -2277,11 +2299,11 @@ $("jRows").addEventListener("click", (e) => {
 function writeJournal(lines, fileName, { prColumn = false } = {}) {
   // Excel's own day number (days since 30-12-1899), so no time zone can move a date by a day.
   const toDate = (iso) => (iso ? (Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) - Date.UTC(1899, 11, 30)) / 864e5 : "");
-  const aoa = [["הוצאות", "", "", "", "ספק / פרטים (מוגבל ל 24 תווים)", "חובה", "זכות", "סכום", "אסמכתא", "תאור חשבון חובה",
+  const aoa = [["הוצאות", "", "", "", "ספק / פרטים (מוגבל ל 24 תווים)", "חובה", "זכות", "סכום", "אסמכתא", "תאור חשבון",
     ...(prColumn ? ["יוצא לפריוריטי"] : [])]];
   for (const l of lines) {
     aoa.push([toDate(l.date), toDate(l.date), toDate(l.date), toDate(l.balance), l.details,
-      +l.debit, +l.credit, l.amount, /^\d+$/.test(l.ref) ? +l.ref : l.ref, accountName(l.debit),
+      +l.debit, +l.credit, l.amount, /^\d+$/.test(l.ref) ? +l.ref : l.ref, accountName(lineAccount(l)),
       ...(prColumn ? [l.r.prExport ? `${dateTime(l.r.prExport)}${prChanged(l.r) ? " · שונה אחרי הייצוא" : ""}` : ""] : [])]);
   }
   const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -2379,7 +2401,7 @@ $("jRows").addEventListener("click", async (e) => {
   const tag = e.target.closest("[data-pr]");
   if (!tag) return;
   e.stopPropagation();
-  const r = records.find((x) => x.id === tag.dataset.pr);
+  const r = anyDoc(tag.dataset.pr);
   if (!r) return;
   if (prChanged(r) && confirm(`המסמך שונה אחרי שיוצא לפריוריטי (${dateTime(r.prExport)}).\n\nאישור: השינוי תוקן גם בפריוריטי, להסיר את האזהרה.\nביטול: להמשיך לשאלה על ביטול הסימון.`)) {
     try { await store.update(r.id, { prSnap: prSnap(r) }); toast("האזהרה הוסרה"); } catch (err) { toast("השמירה נכשלה: " + err.message); }
@@ -2543,7 +2565,7 @@ const drivePreview = (id) => `https://drive.google.com/file/d/${encodeURICompone
 
 $("driveLink").onclick = async () => {
   if (!store.driveToken) { toast("החיבור לדרייב עובד רק באתר עצמו"); return; }
-  const list = [...records, ...miscDocs].filter((r) => inScope(r) && !r.driveId && r.fileName);
+  const list = [...records, ...incomeDocs, ...miscDocs].filter((r) => inScope(r) && !r.driveId && r.fileName);
   if (!list.length) { toast("כל המסמכים כבר מקושרים לקבצים שלהם בדרייב"); return; }
   try {
     if (!(await driveToken())) return;
@@ -2595,6 +2617,30 @@ const MISC_NAMES = [...MISC_TYPES.map(([n]) => n), "אחר"];
 const miscTypeOf = (text, name) => (MISC_TYPES.find(([, re]) => re.test(name)) || MISC_TYPES.find(([, re]) => re.test(text)) || ["אחר"])[0];
 const miscYear = (r) => (r.date || "").slice(0, 4) || (r.createdAt?.toDate ? String(r.createdAt.toDate().getFullYear()) : "");
 
+// The document's file, in Drive, in a new tab.
+async function openInDrive(r) {
+  // opened now, so the browser lets the new tab through; its address comes when the file is found
+  const tab = window.open("about:blank", "_blank");
+  let id = r.driveId;
+  try {
+    if (!id && (await driveToken())) id = await findInDrive(r.fileName);
+    if (id && !r.driveId) store.update(r.id, { driveId: id }).catch(() => {});
+  } catch (err) { toast("החיבור לדרייב נכשל: " + err.message); }
+  if (id) tab.location = driveView(id);
+  else { tab?.close(); toast(`הקובץ "${r.fileName}" לא נמצא בדרייב`); }
+}
+
+// Form 106: what was read from it (or fixed by hand, kept with the document as f106).
+function form106(r) {
+  try { if (r.f106) return JSON.parse(r.f106); } catch { /* read again below */ }
+  return parse106(r.text);
+}
+const f106Inputs = (r) => {
+  const f = form106(r);
+  const box = (k, label, v, num) => `<label class="f106">${label}<input data-f106="${k}" value="${esc(v ?? "")}"${num ? ' inputmode="decimal" dir="ltr"' : ""}></label>`;
+  return `<div class="f106-box">${box("year", "שנה", f.year, 1)}${box("employer", "מעסיק", f.employer)}${box("gross", "ברוטו (158/172)", f.gross, 1)}${box("tax", "מס שנוכה (042)", f.tax, 1)}</div>`;
+};
+
 function renderMisc() {
   const none = !client || client === ALL;
   $("miscNeedClient").hidden = !none;
@@ -2616,12 +2662,22 @@ function renderMisc() {
       <div class="g-info">
         <input class="m-title" value="${esc(r.title || r.fileName || "")}" title="שם המסמך" aria-label="שם המסמך">
         <select class="m-type" aria-label="סוג המסמך">${MISC_NAMES.map((n) => `<option${n === r.docType ? " selected" : ""}>${esc(n)}</option>`).join("")}</select>
+        ${r.docType === "טופס 106" ? f106Inputs(r) : ""}
         <span class="g-foot"><small>${esc([showDate(r.date), r.fileName].filter(Boolean).join(" · "))}</small>
           <span><button type="button" class="ghost m-move" data-mmove="${esc(r.id)}" title="להעביר למסמכי ההוצאות ולרשום בפקודות היומן">➡️ להוצאות</button>
           <button type="button" class="ghost m-whole" data-mwhole="${esc(r.id)}" title="הקובץ המלא בדרייב">📄 כל הקובץ</button>
           <button type="button" class="icon-del" data-mdel="${esc(r.id)}" title="מחיקת המסמך" aria-label="מחיקת המסמך">🗑️</button></span></span>
       </div></div>`).join("");
   $("mEmpty").hidden = rows.length > 0;
+  // the forms 106 of each year, added up
+  const by = new Map();
+  for (const r of mine.filter((x) => x.docType === "טופס 106")) {
+    const f = form106(r), y = by.get(f.year || "") || { n: 0, gross: 0, tax: 0 };
+    y.n++; y.gross += f.gross || 0; y.tax += f.tax || 0;
+    by.set(f.year || "", y);
+  }
+  $("m106Sum").hidden = !by.size;
+  $("m106Sum").innerHTML = [...by].sort((a, b) => b[0].localeCompare(a[0])).map(([y, v]) => `<div>📄 טפסי 106 ${y ? `לשנת ${esc(y)}` : "בלי שנה"}: ${v.n} · ברוטו <b>${fmt(v.gross)}</b> · מס הכנסה שנוכה <b>${fmt(v.tax)}</b></div>`).join("");
   for (const r of rows) previewOf(r.id).then((src) => {
     const box = $("mList").querySelector(`[data-mpic="${CSS.escape(r.id)}"]`);
     if (box) box.innerHTML = src ? `<img src="${src}" alt="">` : '<small class="soon">אין תמונה</small>';
@@ -2637,16 +2693,7 @@ $("mList").addEventListener("click", async (e) => {
   const whole = e.target.closest("[data-mwhole]");
   if (whole) {
     const r = miscDocs.find((x) => x.id === whole.dataset.mwhole);
-    if (!r) return;
-    // opened now, so the browser lets the new tab through; its address comes when the file is found
-    const tab = window.open("about:blank", "_blank");
-    let id = r.driveId;
-    try {
-      if (!id && (await driveToken())) id = await findInDrive(r.fileName);
-      if (id && !r.driveId) store.update(r.id, { driveId: id }).catch(() => {});
-    } catch (err) { toast("החיבור לדרייב נכשל: " + err.message); }
-    if (id) tab.location = driveView(id);
-    else { tab?.close(); toast(`הקובץ "${r.fileName}" לא נמצא בדרייב`); }
+    if (r) openInDrive(r);
     return;
   }
   const del = e.target.closest("[data-mdel]");
@@ -2661,6 +2708,13 @@ $("mList").addEventListener("click", async (e) => {
 $("mList").addEventListener("change", async (e) => {
   const card = e.target.closest("[data-id]");
   if (!card) return;
+  if (e.target.dataset.f106) {
+    const r = miscDocs.find((x) => x.id === card.dataset.id);
+    const num = (v) => { const n = parseFloat(String(v).replace(/,/g, "")); return isNaN(n) ? null : n; };
+    const f = { ...form106(r), [e.target.dataset.f106]: ["gross", "tax"].includes(e.target.dataset.f106) ? num(e.target.value) : e.target.value.trim() };
+    try { await store.update(r.id, { f106: JSON.stringify(f).slice(0, 500) }); toast("נשמר"); } catch (err) { toast("השמירה נכשלה: " + err.message); }
+    return;
+  }
   const upd = e.target.classList.contains("m-title") ? { title: e.target.value.trim().slice(0, 150) }
     : e.target.classList.contains("m-type") ? { docType: e.target.value } : null;
   if (!upd) return;
@@ -2755,6 +2809,189 @@ async function addMisc(files) {
   }
 }
 
+// ---------- income (הכנסות) ----------
+// The invoices and receipts the client issued. Kept apart from the expenses (kind "income"), and entered in
+// the same journal: the owner's account debited, the income account credited.
+const INCOME_ACCOUNTS = ACCOUNTS.filter(([c]) => /^40/.test(c));
+// By the dealer type on the document's date, unless another was chosen.
+const incomeAccount = (r) => r.account || (dealerOf(r.client, r.date) === "licensed" ? "400000" : "400001");
+const anyDoc = (id) => records.find((x) => x.id === id) || incomeDocs.find((x) => x.id === id);
+const INCOME_TYPES = ["חשבונית מס", "חשבונית מס קבלה", "קבלה", "חשבונית עסקה", "חשבונית זיכוי", "אחר"];
+
+function incomeReasons(r) {
+  const out = [];
+  if (!r.date) out.push("חסר תאריך");
+  if (!r.customer) out.push("חסר משלם");
+  if (!r.amount) out.push("חסר סכום");
+  if (r.amount && !r.vat && dealerOf(r.client, r.date) === "licensed") out.push("חסר מע״מ");
+  return out;
+}
+
+function renderIncome() {
+  const mine = incomeDocs.filter(inScope);
+  const years = [...new Set(mine.map((r) => (r.date || "").slice(0, 4)).filter(Boolean))].sort().reverse();
+  const cur = $("iYear").value;
+  $("iYear").innerHTML = '<option value="">כל השנים</option>' + years.map((y) => `<option>${esc(y)}</option>`).join("");
+  $("iYear").value = years.includes(cur) ? cur : "";
+  const year = $("iYear").value, q = $("iSearch").value.trim().toLowerCase();
+  const rows = mine.filter((r) => (!year || (r.date || "").startsWith(year))
+    && (!q || [r.customer, r.docNo, r.docType, r.details, r.fileName, String(r.amount ?? "")].some((v) => String(v || "").toLowerCase().includes(q))))
+    .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  $("iRows").innerHTML = rows.map((r) => `<tr data-id="${esc(r.id)}" class="${needsReview(r) ? "dup" : ""}">
+      <td class="tick-cell">${tickBtn(r)}</td>
+      <td class="num">${esc(showDate(r.date))}</td>
+      <td>${needsReview(r) ? `<span title="${esc(r.reviewWhy || "")}">⚠️</span> ` : ""}${prTag(r)}${esc(r.customer) || `<span class="soon">${esc(r.fileName || "")}</span>`}</td>
+      <td>${esc(r.docType || "")}</td><td class="num">${esc(r.docNo || "")}</td>
+      <td class="num">${r.amount ? fmt(r.amount) : ""}</td><td class="num">${r.vat ? fmt(r.vat) : ""}</td>
+      <td>${esc(accountName(incomeAccount(r)))}</td>
+      <td><button type="button" class="icon-del" data-idel="${esc(r.id)}" title="מחיקת המסמך" aria-label="מחיקת המסמך">🗑️</button></td></tr>`).join("");
+  $("iEmpty").hidden = rows.length > 0;
+  $("iShown").textContent = `${rows.length} מסמכים`;
+  $("iSum").textContent = fmt(rows.reduce((s, r) => s + (r.amount || 0), 0));
+  $("iVat").textContent = fmt(rows.reduce((s, r) => s + (r.vat || 0), 0));
+  const waiting = mine.filter(needsReview).length;
+  $("incomeBadge").hidden = !waiting;
+  $("incomeBadge").textContent = waiting;
+}
+$("iYear").addEventListener("input", renderIncome);
+$("iSearch").addEventListener("input", renderIncome);
+
+async function deleteIncome(r) {
+  if (!(await askDeleteTwice(`למחוק מהתוכנה את מסמך ההכנסה "${r.customer || r.docNo || r.fileName || ""}"?`,
+    "הרשומה והתמונה שלה יימחקו מהתוכנה לצמיתות, ואי אפשר יהיה לשחזר אותן. הקובץ המקורי נשאר בדרייב."))) return false;
+  try { await store.remove(r.id); previewCache.delete(r.id); toast("המסמך נמחק"); return true; }
+  catch (err) { toast("המחיקה נכשלה: " + err.message); return false; }
+}
+$("iRows").addEventListener("click", async (e) => {
+  if (e.target.closest("[data-tick],[data-pr]")) return;
+  const del = e.target.closest("[data-idel]");
+  if (del) { const r = incomeDocs.find((x) => x.id === del.dataset.idel); if (r) deleteIncome(r); return; }
+  const tr = e.target.closest("tr[data-id]");
+  if (tr) openIncome(tr.dataset.id);
+});
+// The mark of an export to Priority, as in the journal.
+$("iRows").addEventListener("click", (e) => {
+  const tag = e.target.closest("[data-pr]");
+  if (!tag) return;
+  const r = anyDoc(tag.dataset.pr);
+  if (r && confirm(`לבטל את סימון הייצוא ל-Priority של המסמך הזה (${dateTime(r.prExport)})?\nהוא ייכלל שוב בעדכון הבא.`)) {
+    store.update(r.id, { prExport: null, prSnap: "" }).catch((err) => toast("השמירה נכשלה: " + err.message));
+  }
+});
+
+// The window of a document; a new one (no id) is typed in by hand.
+let incomeEditing = null;
+async function openIncome(id) {
+  const r = id ? incomeDocs.find((x) => x.id === id) : { client: client && client !== ALL ? client : "", date: "", docType: INCOME_TYPES[0] };
+  if (!r) return;
+  incomeEditing = id || "";
+  $("iTitle").textContent = id ? "מסמך הכנסה" : "הכנסה ידנית";
+  $("iDone").innerHTML = id ? handledNote(r) : "";
+  $("iWhy").hidden = !r.reviewWhy;
+  $("iWhy").textContent = r.reviewWhy || "";
+  $("iDelete").hidden = !id;
+  $("iWhole").hidden = !r.fileName;
+  const amountBox = (k, label) => {
+    const expr = r[k + "Calc"] || "", val = r[k] ?? "";
+    return `<label>${label}<input name="${k}" type="text" inputmode="decimal" dir="ltr" autocomplete="off" data-calc="1" value="${esc(val)}"${expr ? ` data-expr="${esc(expr)}" data-shown="${esc(val)}"` : ""}><small class="calc-hint"></small></label>`;
+  };
+  const options = (list, val) => list.map(([v, t]) => `<option value="${esc(v)}"${v === val ? " selected" : ""}>${esc(t)}</option>`).join("");
+  const types = INCOME_TYPES.includes(r.docType) || !r.docType ? INCOME_TYPES : [r.docType, ...INCOME_TYPES];
+  $("iFields").innerHTML = `
+    <label>לקוח<select name="client">${options(clientNames().map((n) => [n, n]), r.client)}</select></label>
+    <label>תאריך<input name="date" type="date" value="${esc(r.date || "")}"></label>
+    <label class="wide">משלם<input name="customer" value="${esc(r.customer || "")}"></label>
+    <label>סוג מסמך<select name="docType">${options(types.map((t) => [t, t]), r.docType)}</select></label>
+    <label>מספר מסמך<input name="docNo" value="${esc(r.docNo || "")}"></label>
+    ${amountBox("amount", "סכום כולל מע״מ (₪)")}${amountBox("vat", "מע״מ (₪)")}
+    <label class="wide">חשבון הכנסה<select name="account">${options(INCOME_ACCOUNTS.map(([c, n]) => [c, `${c} · ${n}`]), incomeAccount(r))}</select></label>
+    <label class="wide">פירוט<input name="details" value="${esc(r.details || "")}"></label>`;
+  $("iFields").querySelectorAll("[data-calc]").forEach(calcHint);
+  $("iPic").innerHTML = '<p class="soon">טוען…</p>';
+  $("incomeDlg").showModal();
+  const src = id ? await previewOf(id) : "";
+  if (incomeEditing === (id || "")) $("iPic").innerHTML = src ? `<img src="${src}" alt="המסמך">` : '<p class="soon">אין תמונה של המסמך.</p>';
+}
+$("iFields").addEventListener("focusin", calcFocus);
+$("iFields").addEventListener("focusout", calcFocus);
+$("iFields").addEventListener("input", (e) => { if (e.target.dataset.calc) calcHint(e.target); });
+
+async function saveIncome(approve) {
+  const box = $("iFields");
+  const get = (k) => box.querySelector(`[name=${k}]`);
+  const amount = (k) => { const n = calcValue(get(k).value); return n == null || Number.isNaN(n) ? null : round2(n); };
+  if ([get("amount"), get("vat")].some((el) => Number.isNaN(calcValue(el.value)))) { toast("יש חישוב לא תקין בסכום"); return; }
+  const before = incomeEditing ? incomeDocs.find((x) => x.id === incomeEditing) : null;
+  const rec = {
+    client: get("client").value, date: get("date").value, customer: get("customer").value.trim(), docType: get("docType").value,
+    docNo: get("docNo").value.trim(), amount: amount("amount"), vat: amount("vat"), amountCalc: calcOf(get("amount")), vatCalc: calcOf(get("vat")),
+    account: get("account").value, accountBy: "hand", details: get("details").value.trim(),
+  };
+  if (!rec.client) { toast("בחרו לקוח"); return; }
+  const why = approve ? [] : incomeReasons(rec);
+  rec.status = why.length ? "review" : "ok";
+  rec.reviewWhy = why.join(" · ");
+  rec.checked = approve || !!before?.checked;
+  if (approve) Object.assign(rec, approvedNow());
+  try {
+    if (before) await store.update(before.id, rec);
+    else await store.add({ kind: "income", supplier: "", supplierId: "", category: "", fileName: "", fileHash: "", text: "", ...rec }, "");
+    $("incomeDlg").close();
+    toast(why.length ? "נשמר. המסמך עדיין מסומן לבדיקה" : "נשמר");
+  } catch (err) { toast("השמירה נכשלה: " + err.message); }
+}
+$("iAdd").onclick = () => { if (!clientNames().length) { toast("הוסיפו קודם לקוח"); return; } openIncome(""); };
+$("iApprove").onclick = () => saveIncome(true);
+$("iSave").onclick = () => saveIncome(false);
+$("iCancel").onclick = () => $("incomeDlg").close();
+$("iDelete").onclick = async () => {
+  const r = incomeDocs.find((x) => x.id === incomeEditing);
+  if (r && (await deleteIncome(r))) $("incomeDlg").close();
+};
+$("iWhole").onclick = () => { const r = incomeDocs.find((x) => x.id === incomeEditing); if (r) openInDrive(r); };
+
+// Upload: read like an expense; the one who paid is the name on the document ("לכבוד").
+$("iPick").onclick = () => $("iFile").click();
+$("iFile").onchange = () => { addIncome([...$("iFile").files]); $("iFile").value = ""; };
+$("iDrop").addEventListener("dragover", (e) => { e.preventDefault(); $("iDrop").classList.add("over"); });
+$("iDrop").addEventListener("dragleave", () => $("iDrop").classList.remove("over"));
+$("iDrop").addEventListener("drop", (e) => { e.preventDefault(); $("iDrop").classList.remove("over"); addIncome([...e.dataTransfer.files]); });
+async function addIncome(files) {
+  if (!client || client === ALL) { toast("בחרו קודם לקוח"); return; }
+  const who = client;
+  for (const file of files) {
+    const el = document.createElement("div");
+    el.className = "item";
+    el.innerHTML = `<div class="thumb"><span class="soon">⏳</span></div><div class="body"><span class="fname">${esc(file.name)}</span><div class="result">קורא…</div></div>`;
+    $("iQueue").prepend(el);
+    const say = (html, cls = "") => { el.className = `item ${cls}`; el.querySelector(".result").innerHTML = html; };
+    let hash = "";
+    try { hash = await fingerprint(file); } catch { /* without it a copy is not caught */ }
+    const same = hash && incomeDocs.find((r) => r.fileHash === hash && r.client === who);
+    if (same && !confirm(`"${file.name}" כבר קיים במסמכי ההכנסה של ${who}. להעלות אותו שוב?`)) { say("⏭️ לא הועלה: כבר קיים", "dup"); continue; }
+    let text = "", alt = "", preview = "", hint = "";
+    try { ({ text, alt = "", preview, hint = "" } = await oneAtATime(() => readFile(file, () => {}))); }
+    catch (err) { say(`❌ לא נקרא: ${esc(err.message)}`, "failed"); continue; }
+    if (preview) el.querySelector(".thumb").innerHTML = `<img src="${preview}" alt="">`;
+    const found = parseText(text, hint, alt);
+    const rec = {
+      client: who, kind: "income", customer: found.customer || "", date: found.date || "", docType: found.docType || "",
+      docNo: found.docNo || "", amount: found.amount ?? null, vat: found.vat ?? null, details: found.details || "",
+      supplier: "", supplierId: "", category: "", fileName: file.name, fileHash: hash,
+      text: [text, alt].filter(Boolean).join("\n----\n").slice(0, 15000),
+    };
+    const why = incomeReasons(rec);
+    if (found.currency) why.push(`במטבע ${found.currency}: לבדוק את הסכום בשקלים`);
+    rec.status = why.length ? "review" : "ok";
+    rec.reviewWhy = why.join(" · ");
+    try {
+      await store.add(rec, preview);
+      const summary = [rec.customer, showDate(rec.date), rec.amount ? fmt(rec.amount) : ""].filter(Boolean).map(esc).join(" · ");
+      say(why.length ? `⚠️ נשמר לבדיקה · ${summary}<br><small>${esc(rec.reviewWhy)}</small>` : `✅ נשמר · ${summary}`, why.length ? "review" : "saved");
+    } catch (err) { say(`❌ השמירה נכשלה: ${esc(err.message)}`, "failed"); }
+  }
+}
+
 // ---------- filing report (דוח להגשה) ----------
 // For one client and tax year: the comparative report (imported from the bookkeeping software's Excel,
 // or put together from the documents here), and the filing report it adds up to. Saved per client and
@@ -2765,7 +3002,7 @@ const reportId = (name, year) => `${name}__${year}`.replace(/[\/\s]+/g, "_");
 const thisYear = new Date().getFullYear();
 
 function filingYears() {
-  const ys = new Set(records.filter(inScope).map((r) => +(r.date || "").slice(0, 4)).filter(Boolean));
+  const ys = new Set([...records, ...incomeDocs].filter(inScope).map((r) => +(r.date || "").slice(0, 4)).filter(Boolean));
   ys.add(thisYear - 1);
   if (filing?.year) ys.add(+filing.year);
   return [...ys].sort((a, b) => b - a);
@@ -2892,7 +3129,8 @@ $("fFromDocs").onclick = async () => {
   if (filing.lines.length && filing.source === "file"
       && !confirm("לשנה הזו כבר יש דוח השוואתי מקובץ. להחליף אותו בחישוב מהמסמכים במערכת?")) return;
   const net = (r) => (dealerOf(r.client, r.date) === "licensed" && r.vat && r.vat < (r.amount || 0) ? r.amount - r.vat : r.amount || 0);
-  const lines = comparativeFromDocs(records.filter((r) => inScope(r) && !isDonationDoc(r)), +filing.year, accountOf, accountName, net);
+  const lines = comparativeFromDocs([...records.filter((r) => inScope(r) && !isDonationDoc(r)), ...incomeDocs.filter(inScope)], +filing.year,
+    (r) => (r.kind === "income" ? incomeAccount(r) : accountOf(r)), accountName, net);
   if (!lines.length) { toast(`אין מסמכים לשנת ${filing.year}`); return; }
   filing = { ...filing, source: "docs", fileName: "", lines };
   await saveFiling(`חושב מ-${lines.length} חשבונות של המסמכים`);

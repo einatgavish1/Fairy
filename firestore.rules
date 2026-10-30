@@ -25,7 +25,7 @@ service cloud.firestore {
     function validDoc() {
       let d = request.resource.data;
       return d.keys().hasOnly(['client', 'date', 'supplier', 'supplierId', 'category', 'docType', 'docNo', 'details',
-                               'amount', 'vat', 'fileName', 'fileHash', 'customer', 'status', 'reviewWhy', 'account', 'accountBy', 'notDup', 'checked', 'kind', 'title', 'driveId', 'currency', 'origAmount', 'origVat', 'rate', 'rateDate', 'paid', 'pct', 'checkedAt', 'checkedBy', 'prExport', 'prSnap', 'amountCalc', 'vatCalc', 'origAmountCalc', 'paidCalc', 'text', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
+                               'amount', 'vat', 'fileName', 'fileHash', 'customer', 'status', 'reviewWhy', 'account', 'accountBy', 'notDup', 'checked', 'kind', 'title', 'driveId', 'currency', 'origAmount', 'origVat', 'rate', 'rateDate', 'paid', 'pct', 'checkedAt', 'checkedBy', 'prExport', 'prSnap', 'f106', 'amountCalc', 'vatCalc', 'origAmountCalc', 'paidCalc', 'text', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
           && (d.amount == null || d.amount is number)
           && (d.vat == null || d.vat is number)
           && d.date is string && d.supplier is string && d.details is string
@@ -51,8 +51,10 @@ service cloud.firestore {
           // the last approval: when (ms) and by whom
           && (!('checkedAt' in d) || d.checkedAt is number)
           && (!('checkedBy' in d) || (d.checkedBy is string && d.checkedBy.size() <= 120))
-          // kind "misc": one of the client's other documents (a rent contract, form 106...), not an expense
-          && (!('kind' in d) || d.kind in ['', 'misc'])
+          // kind "misc": one of the client's other documents (a rent contract, form 106...); "income": a document the client issued
+          && (!('kind' in d) || d.kind in ['', 'misc', 'income'])
+          // form 106: what was read from it, or fixed by hand
+          && (!('f106' in d) || (d.f106 is string && d.f106.size() <= 500))
           && (!('title' in d) || (d.title is string && d.title.size() <= 150))
           // driveId: the document's original file in Google Drive
           && (!('driveId' in d) || (d.driveId is string && d.driveId.size() <= 100))

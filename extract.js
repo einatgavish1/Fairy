@@ -746,3 +746,47 @@ function parseOne(text, hint = "") {
     donation: isDonation(text),
   };
 }
+
+// Form 106: the year, the employer, the pay and the income tax deducted, by the form's codes (158/172 and 042)
+// or their names. Whatever is not found stays empty, to fill in by hand.
+export function parse106(text) {
+  const lines = String(text || "").split("\n");
+  const CODE = /(?<!\d)(?:158|172|042)(?!\d)/g;
+  const numbers = (l) => [...l.matchAll(/\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{3,7}(?:\.\d+)?/g)]
+    .filter((m) => m[0].includes(",") || !/^(?:158|172|042|106|20\d\d)$/.test(m[0]))
+    .map((m) => ({ at: m.index, n: parseFloat(m[0].replace(/,/g, "")) })).filter((x) => x.n > 0);
+  // A code's number, by the side the numbers stand on in that line: after each code when any number follows
+  // the last code, before each code otherwise (one line may hold several of the form's fields).
+  const byCode = (l, wanted) => {
+    const codes = [...l.matchAll(CODE)], nums = numbers(l), last = codes[codes.length - 1];
+    const after = nums.some((x) => x.at > last.index);
+    for (const c of codes.filter((m) => wanted.includes(m[0]))) {
+      const found = after ? nums.find((x) => x.at > c.index) : nums.filter((x) => x.at < c.index).pop();
+      if (found) return found.n;
+    }
+    return null;
+  };
+  const money = (wanted, name) => {
+    for (const l of lines) {
+      if (![...l.matchAll(CODE)].some((m) => wanted.includes(m[0]))) continue;
+      const n = byCode(l, wanted);
+      if (n != null) return n;
+    }
+    // by the field's name, the number nearest it
+    for (const l of lines) {
+      const m = l.match(name);
+      if (!m) continue;
+      const near = numbers(l).sort((a, b) => Math.abs(a.at - m.index) - Math.abs(b.at - m.index))[0];
+      if (near) return near.n;
+    }
+    return null;
+  };
+  const all = lines.join(" ");
+  const year = (all.match(/(?:לשנת|שנת\s*(?:ה)?מס)\D{0,10}(20\d\d)/) || all.match(/\b(20\d\d)\b/))?.[1] || "";
+  const employer = (lines.map((l) => l.match(/שם\s*(?:ה)?מעסיק[:\s]+([^\d:(]{2,40})/)?.[1]).find(Boolean) || "").trim();
+  return {
+    year, employer,
+    gross: money(["158", "172"], /סה["״]?כ\s*תשלומים|משכורת/),
+    tax: money(["042"], /מס\s*הכנסה/),
+  };
+}
