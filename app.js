@@ -1007,7 +1007,7 @@ async function processFile(file, path, batch, page = null) {
   let keptTwin = false; // the person already said to keep it: not asked again about its content
   // The same file, its record still waiting for review: read again into that record, if the person says so.
   if (reread) {
-    if (!(await askKeepDuplicate(el, show, "הקובץ הזה כבר קיים במערכת ומחכה לבדיקה", describe(reread), "📖 לקרוא מחדש ולעדכן"))) {
+    if (!(await askKeepDuplicate(el, show, reread.checked ? "הקובץ הזה כבר קיים במערכת והמסמך כבר נבדק (וי ירוק). לקרוא אותו מחדש?" : "הקובץ הזה כבר קיים במערכת ומחכה לבדיקה", describe(reread), "📖 לקרוא מחדש ולעדכן"))) {
       progDone(item, "skipped");
       show("dup", `⏭️ <b>לא נקלט: הקובץ כבר קיים במערכת</b><br><small>${esc(describe(reread))}</small>`);
       return;
@@ -1671,6 +1671,11 @@ function dialogPicture(id, src, r) {
     if (turned && editing === id) dialogPicture(id, turned, r);
   };
   $("dlgReread").onclick = async () => {
+    // a document already checked is read again only if the person says so
+    const now = records.find((x) => x.id === id) || r;
+    if (now.checked && !(await askDelete("המסמך כבר נבדק", `המסמך מסומן בווי ירוק${now.checkedAt ? ` (אושר ${dateTime(now.checkedAt)})` : ""}.
+קריאה מחדש תחליף בטופס את הפרטים שנבדקו. הם יישמרו רק אם תלחצו שמירה.
+לקרוא בכל זאת?`, { okLabel: "📖 לקרוא מחדש" }))) return;
     const btn = $("dlgReread");
     btn.disabled = true;
     try {
@@ -1701,9 +1706,13 @@ function dialogPicture(id, src, r) {
 // The documents that come out complete are no longer for review.
 let rereading = false;
 $("rereadAll").onclick = async () => {
-  const list = records.filter((r) => inScope(r) && (r.status === "review" || r.status === "failed"));
-  if (!list.length || rereading) return;
-  if (!confirm(`לקרוא שוב ${list.length} מסמכים מהתמונות השמורות שלהם? זה לוקח כמה שניות לכל מסמך, ואפשר להמשיך לעבוד בינתיים.`)) return;
+  const waiting = records.filter((r) => inScope(r) && (r.status === "review" || r.status === "failed"));
+  // documents with a green tick stay as they are
+  const list = waiting.filter((r) => !r.checked), ticked = waiting.length - list.length;
+  if (rereading) return;
+  if (!list.length) { if (ticked) toast("המסמכים שמחכים לבדיקה כבר מסומנים בווי ירוק, ולכן לא נקראים שוב"); return; }
+  if (!confirm(`לקרוא שוב ${list.length} מסמכים מהתמונות השמורות שלהם? זה לוקח כמה שניות לכל מסמך, ואפשר להמשיך לעבוד בינתיים.${ticked ? `
+${ticked} מסמכים עם וי ירוק לא ייקראו שוב.` : ""}`)) return;
   rereading = true;
   const btn = $("rereadAll");
   btn.disabled = true;
