@@ -289,13 +289,11 @@ export async function rereadPreview(dataUrl, deg = null, onProgress = () => {}) 
   return readPicture(c, onProgress, deg);
 }
 
-// When the first reading of a picture misses the date, the amount or the supplier, the picture is read
-// again in black and white: each pixel against the light around it, which brings out faint print on a
-// shaded photo or a grey scan. parseText takes each detail from the clearer of the two readings.
+// Every picture is read a second time, in black and white: each pixel against the light around it, which brings out faint print on a
+// shaded photo or a grey scan. parseText takes each detail from the clearer of the two readings, and says
+// where they differ.
 async function secondReading(canvas, text, onProgress) {
   if (!canvas) return "";
-  const first = parseOne(text);
-  if (first.date && first.amount && first.supplier) return "";
   try { return await ocr(binarize(canvas), (x) => onProgress(0.8 + 0.2 * x, "קורא שוב בניגודיות גבוהה…")); }
   catch { return ""; }
 }
@@ -478,7 +476,12 @@ function datesIn(line) {
 // Money amounts in a line, after taking out dates, phone numbers, percentages and long ID numbers.
 function amountsIn(line) {
   const clean = line
-    .replace(/(?<!\d)\d{1,2}\s?[./-]\s?\d{1,2}\s?[./-]\s?\d{2,4}(?!\d)/g, " ")
+    .replace(/(?<![\d.,])\d{1,3}\/\d{4,}(?!\d)/g, " ") // a document's number with its series: "02/001433"
+    .replace(/(\d) \.(\d{2})(?!\d)/g, "$1.$2") // "202 .90"
+    .replace(/(\.\d{2})(?=\d[\d,]*\.\d{2})/g, "$1 ") // two amounts stuck together: "250.001,250.00"
+    .replace(/(?<![\d.,])0(?=\d{1,3},\d{3})/g, "") // "01,250.00"
+    .replace(/%\s?\d{1,2}(?:\.\d+)?(?![\d.])/g, " ") // a rate written the other way round ("%18.00")
+    .replace(/(?<!\d)\d{1,3}\s?[./-]\s?\d{1,2}\s?[./-]\s?\d{2,4}(?!\d)/g, " ")
     .replace(/(?<!\d)0\d{1,2}-?\d{3}-?\d{4}(?!\d)|(?<!\d)05\d-?\d{7}(?!\d)/g, " ")
     .replace(/\d+(?:\.\d+)?\s?%/g, " ")
     // times of day and opening hours ("13:15:31", "07:00-14:00")
@@ -540,7 +543,58 @@ function findVat(lines, total) {
     const pick = nums.find((x) => x.dec) || nums[nums.length - 1];
     if (pick) vat = pick.n;
   }
-  return vat;
+  // the rate itself ("מע"מ 18"), not an amount
+  return VAT_RATES.some((r) => vat === r * 100) ? null : vat;
+}
+
+// The VAT rates a document may carry: an amount is only sure when the document's own sums agree with it.
+const VAT_RATES = [0.18, 0.17];
+const near = (a, b) => Math.abs(a - b) < 0.03;
+// Which amounts on the page add up: the sum before VAT and the VAT against the total. -> { total, vat } or null.
+// The total is the largest that agrees, so a line item that happens to fit does not win.
+function sumsOf(lines) {
+  const all = [...new Set(lines.flatMap(amountsIn).filter((x) => x.dec).map((x) => x.n))].sort((a, b) => b - a);
+  for (const t of all.filter((x) => x >= 5)) { // too small to tell a sum from a rounding
+    for (const rate of VAT_RATES) {
+      const vat = Math.round((t * rate / (1 + rate)) * 100) / 100, net = Math.round((t - vat) * 100) / 100;
+      if (all.some((x) => near(x, net)) || all.some((x) => near(x, vat))) return { total: t, vat, sure: all.some((x) => near(x, net)) && all.some((x) => near(x, vat)) };
+    }
+  }
+  // "עיגול 0.04" under the sum: that sum and its rounding are the sum before VAT
+  for (const [i, line] of lines.entries()) {
+    const round = /עיגול/.test(line) && !/אחרי\s*עיגול/.test(line) ? amountsIn(line).find((x) => x.dec && x.n < 1)?.n : null;
+    const sum = round && lines[i - 1] ? amountsIn(lines[i - 1]).filter((x) => x.dec).pop()?.n : null;
+    if (sum && lines.some((l) => VAT_RE.test(l))) {
+      const net = sum + round, rate = lines.some((l) => /17(?:\.0+)?\s?%/.test(l)) ? 0.17 : 0.18;
+      return { total: Math.round(net * (1 + rate) * 100) / 100, vat: Math.round(net * rate * 100) / 100, sure: false, net: sum };
+    }
+  }
+  // the total lost, its sum before VAT named on the page
+  for (const line of lines) {
+    if (!NET_RE.test(line)) continue;
+    const net = amountsIn(line).filter((x) => x.dec).pop()?.n;
+    if (net) {
+      const rate = lines.some((l) => /17(?:\.0+)?\s?%/.test(l)) ? 0.17 : 0.18;
+      const vat = Math.round(net * rate * 100) / 100;
+      if (lines.some((l) => VAT_RE.test(l))) return { total: Math.round((net + vat) * 100) / 100, vat, sure: false, net };
+    }
+  }
+  // the total itself lost, its two parts still there
+  for (const net of all) {
+    for (const rate of VAT_RATES) {
+      const vat = all.find((x) => near(x, net * rate));
+      if (vat) return { total: Math.round((net + vat) * 100) / 100, vat, sure: false };
+    }
+  }
+  return null;
+}
+const NET_RE = new RegExp(`אחרי\\s*עיגול|לאחר\\s*הנחה|לפני\\s*מע${Q}מ|ללא\\s*מע${Q}מ|חייב\\s*במע${Q}מ`);
+// A shekel sign read as a digit ("5159.90" for ₪159.90): the same amount without its first digit is also on the page.
+function dropSign(n, lines) {
+  const s = String(n);
+  if (s.length < 4) return n;
+  const rest = +s.slice(1);
+  return lines.flatMap(amountsIn).some((x) => x.n === rest) ? rest : n;
 }
 
 function findDate(lines) {
@@ -571,6 +625,12 @@ export const DOC_TYPE_NAMES = ["חשבונית מס קבלה", "חשבונית �
 
 function findDocNo(text) {
   const res = [
+    // "02/001334 :מספר": the same, in a PDF's visual order
+    /(?:חשבונית(?:\s*מס)?(?:\s*[/-]?\s*קבלה)?|קבלה|זיכוי)\s*(?:\d{1,3}\/)?0*(\d{1,12})\s*:\s*מספר/,
+    // "מספר: 02/001459": a series and the number
+    /(?:חשבונית(?:\s*מס)?(?:\s*[/-]?\s*קבלה)?|קבלה|זיכוי)\s*מספר\s*:?\s*\d{1,3}\/0*(\d{1,12})/,
+    // "מסי 66916013/07/2025": the number stuck to the date
+    /(?:חשבונית(?:\s*מס)?(?:\s*[/-]?\s*קבלה)?|קבלה|זיכוי)\s*(?:מס(?:פר|['׳.י])?|#)?\s*:?\s*(\d{3,12}?)(?=\d{1,2}[/.]\d{1,2}[/.]\d{2,4})/,
     /(?:חשבונית(?:\s*מס)?(?:\s*[/-]?\s*קבלה)?|קבלה|חשבון\s*עסקה|זיכוי)\s*(?:מס(?:פר|['׳.י])?|#)?\s*:?\s*([A-Z]{0,3}-?\d{3,12})(?![\d./])/, // no /i: lowercase letters before the number are OCR noise
     /מס(?:פר|['׳.])\s*(?:חשבונית|מסמך|קבלה|אסמכתא)\s*:?\s*([A-Z]{0,3}-?\d{3,12})/i,
     /(?:invoice|receipt|document)\s*(?:no\.?|number|#)\s*:?\s*([A-Z]{0,4}-?\d{3,12})/i,
@@ -584,7 +644,7 @@ function findDocNo(text) {
   return "";
 }
 
-const NOT_A_NAME = /חשבונית|קבלה|מקור|העתק|נאמן\s*למקור|תאריך|לכבוד|עמוד|דף\s*\d|page|invoice|receipt|copy|original|טלפון|טל['׳.:]|פקס|fax|tel|www\.|@|כתובת|רחוב|רח['׳]|ת\.?ד|מיקוד|לקוח|customer|bill\s*to/i;
+const NOT_A_NAME = /המשך|מועד|אמצעי|פרטים|חשבונית|קבלה|מקור|העתק|נאמן\s*למקור|תאריך|לכבוד|עמוד|דף\s*\d|page|invoice|receipt|copy|original|טלפון|טל['׳.:]|פקס|fax|tel|www\.|@|כתובת|רחוב|רח['׳]|ת\.?ד|מיקוד|לקוח|customer|bill\s*to/i;
 const cleanName = (s) => s.replace(ID_RE, "").replace(/(\S)(בע["״']?מ)/, "$1 $2").replace(/[|_*•·]+/g, " ").replace(/\s+/g, " ").replace(/^[\s\-:.,=+~"'״*]+|[\s\-:.,=+~*]+$/g, "").slice(0, 60);
 
 // The customer the document was made out to: for an accountant, her client. The name after "לכבוד"
@@ -624,14 +684,41 @@ const CHAINS = [
 ];
 const chainOf = (text) => CHAINS.find(([, re]) => re.test(text));
 // A name read from the page that already holds the chain's name stays as it is ("סטימצקי (2005) בע"מ").
-function supplierOf(lines, text, hint) {
-  const found = findSupplier(lines), chain = chainOf(text) || chainOf(hint);
+function supplierOf(lines, text, hint, opts = {}) {
+  const known = knownSupplier(text, lines, opts.known || []);
+  if (known) return known;
+  const found = findSupplier(lines, opts), chain = chainOf(text) || chainOf(hint);
   return chain && !chain[1].test(found) ? chain[0] : found;
 }
 
 const LABEL_TAIL = /\s*(?:שעה|תאריך|קופה|קופאי|מס['׳]?\s*קופה|עמדה)\s*:.*$/;
+// A screenshot's top bar: the app's name or a clock is not a supplier; a run of Latin letters in mixed case is noise.
+const SCREEN_NOISE = /^(?:whatsapp|chrome|gmail|safari|outlook|documents?|photos?|drive|mail|inbox|acrobat|adobe)\b|^[\d\s:.>|]+$/i;
+const NOISE_WORD = (w) => /^[A-Za-z0-9]{4,}$/.test(w) && (/\d/.test(w) || /[a-z][A-Z]/.test(w) || !/[aeiouAEIOU]/.test(w));
+const isNoise = (line) => SCREEN_NOISE.test(line.replace(/[^\p{L}\d\s:.>|]/gu, "").trim()) || line.split(/\s+/).some(NOISE_WORD);
+// What follows a name on its line: a title, a licence, "עוסק מורשה".
+const NAME_TAIL = /\s*(?:\(?\bMSW\b\)?|\bעו["'״׳י]*ס\b|\bעוסק\b|\bע\.?מ\b|\bח\.?פ\b|\bטל\b).*$/i;
+const lettersOf = (s) => String(s || "").replace(/בע["״']?מ/g, "").replace(/[^\p{L}\d]/gu, "");
+// Words of the client's name or address: the document is made out to them, they did not issue it.
+function isClient(line, client) {
+  if (!client) return false;
+  const words = client.split(/\s+/).filter((w) => w.length >= 2);
+  return words.length > 0 && words.every((w) => line.includes(w));
+}
+// The supplier among those already approved: by the company number on the page (one that belongs to one
+// supplier only), or by the whole name standing in a line.
+function knownSupplier(text, lines, known) {
+  const digits = text.replace(/(?<=\d)-(?=\d)/g, "");
+  const byId = known.filter((k) => k.id && digits.includes(k.id));
+  if (byId.length === 1) return byId[0].name;
+  const top = lettersOf(lines.slice(0, 30).join(" "));
+  return [...known].sort((a, b) => b.name.length - a.name.length).find((k) => lettersOf(k.name).length >= 5 && top.includes(lettersOf(k.name)))?.name || "";
+}
 
-function findSupplier(lines) {
+function findSupplier(lines, { client = "" } = {}) {
+  // The block made out to the client is not the supplier: the line of "לכבוד" and the two after it.
+  const to = lines.findIndex((l) => /לכבוד/.test(l));
+  lines = lines.filter((l, i) => !(to >= 0 && i > to && i <= to + 2) && !isClient(l, client) && !isNoise(l));
   // A company name usually ends with בע"מ / Ltd.
   const co = new RegExp(`([^:|]{2,50}?\\s*בע${Q}מ|[A-Za-z0-9 .&'-]{2,50}?\\b(?:Ltd|LTD|Inc|LLC|GmbH)\\.?)`);
   for (const line of lines.slice(0, 25)) {
@@ -639,7 +726,7 @@ function findSupplier(lines) {
     const m = line.match(co);
     if (m) {
       const name = cleanName(m[1].replace(/^.*?(?:שם\s*העסק|ספק|מאת)\s*:?\s*/, ""));
-      if (name.replace(/בע.?מ/, "").trim().length >= 2) return name;
+      if (name.replace(/בע.?מ/, "").trim().length >= 2 && !NOT_A_NAME.test(name)) return name;
     }
   }
   // "שם העסק: ..." / "ספק: ..."
@@ -654,7 +741,7 @@ function findSupplier(lines) {
     const letters = line.replace(/[^\p{L}]/gu, "");
     if (letters.length < 3 || NOT_A_NAME.test(line)) continue;
     if (line.replace(/[^\d]/g, "").length > letters.length) continue;
-    return cleanName(line);
+    return cleanName(line.replace(NAME_TAIL, ""));
   }
   return "";
 }
@@ -705,35 +792,72 @@ function findDetails(lines) {
 // hint: extra words that only help tell the service type (the logo's, read from the top of the page).
 // alt: a second reading of the same picture (see secondReading): every detail comes from the clearer
 // reading, and one it lacks from the other.
-export function parseText(text, hint = "", alt = "") {
-  const a = parseOne(text, hint);
+// opts: { client, known: [{ name, id }] } what is known already: whose document it is, the approved suppliers.
+export function parseText(text, hint = "", alt = "", opts = {}) {
+  const a = parseOne(text, hint, opts);
   if (!alt) return a;
-  const b = parseOne(alt, hint);
+  const b = parseOne(alt, hint, opts);
   const [first, second] = clarity(text) >= clarity(alt) ? [a, b] : [b, a];
   const out = { ...first };
   for (const k of Object.keys(out)) if ((out[k] === "" || out[k] == null) && second[k] !== "" && second[k] != null) out[k] = second[k];
+  // the reading whose sums agree wins over the clearer one
+  if (second.sure && !first.sure) Object.assign(out, { amount: second.amount, vat: second.vat, sure: true });
+  // where the two readings differ in what matters, a person should look
+  out.doubt = ["amount", "date", "docNo"].filter((k) => first[k] && second[k] && String(first[k]) !== String(second[k]) && !(k === "amount" && out.sure));
   return out;
 }
 
 // How readable a reading came out: the words an invoice always has, and real Hebrew words, count; the
 // stray marks of a bad reading don't.
 function clarity(text) {
+  text = hebrewFont(text);
   const words = text.split(/\s+/).filter((w) => /^[א-ת"״'׳.]{3,}$/.test(w)).length;
   return hits(text) * 5 + words;
 }
 
-function parseOne(text, hint = "") {
-  text = text.replace(/[‎‏‪-‮⁦-⁩]/g, ""); // invisible direction marks from OCR
+// Some PDFs (Ituran's) keep Hebrew in a font of its own: every letter comes out 0x330 below its place, the
+// line in visual order. They are put back, each line turned around with its numbers left as they are.
+function hebrewFont(text) {
+  if (!/[ʠ-ʺ]/.test(text)) return text;
+  return text.split("\n").map((line) => {
+    if (!/[ʠ-ʺ]/.test(line)) return line;
+    const fixed = line.replace(/[ʠ-ʺ]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0x330));
+    return [...fixed].reverse().join("").replace(/[\d.,/:]*\d[\d.,/:]*/g, (n) => [...n].reverse().join(""));
+  }).join("\n");
+}
+
+function parseOne(text, hint = "", opts = {}) {
+  text = hebrewFont(text.replace(/[‎‏‪-‮⁦-⁩]/g, "")); // invisible direction marks from OCR
   const lines = text.split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
-  const total = findTotal(lines);
-  const vat = findVat(lines, total);
-  const supplier = supplierOf(lines, text, hint);
+  // What the lines say, then what the document's own sums say.
+  const said = dropSign(findTotal(lines), lines);
+  const sums = sumsOf(lines);
+  // A whole number the lines give, printed once, is a misread amount ("₪88") when the sums or a repeated
+  // amount say otherwise.
+  const all = lines.flatMap(amountsIn);
+  const once = Number.isInteger(said) && all.filter((x) => x.n === said).length < 2;
+  const twice = all.filter((x) => x.dec && all.filter((y) => y.n === x.n).length >= 2).map((x) => x.n).sort((p, q) => q - p)[0];
+  // Only strong evidence replaces what the lines say: all three sums agree, nothing was said, the amount said
+  // is the sum before VAT, or it is a small whole number printed once.
+  const small = Number.isInteger(said) && said < 100;
+  const parts = sums && (near(said, sums.vat) || (sums.net && near(said, sums.net))); // what was said is the VAT or the sum before it
+  const total = sums && (sums.sure || !said || parts || small) ? sums.total : small && twice ? twice : said;
+  let vat = sums && near(total, sums.total) ? sums.vat : findVat(lines, total);
+  // A whole digit or two beside a total of hundreds is a misread VAT ("מע"מ 18%₪6"): worked out from the rate
+  // printed on the page, or left empty.
+  if (vat && total && Number.isInteger(vat) && vat < total * 0.05) {
+    const rate = VAT_RATES.find((r) => lines.some((l) => VAT_RE.test(l) && new RegExp(`${r * 100}(?:\.0+)?\s?%`).test(l)));
+    vat = rate ? Math.round((total * rate / (1 + rate)) * 100) / 100 : null;
+  }
+  const supplier = supplierOf(lines, text, hint, opts);
   let docType = "";
   for (const [re, name] of DOC_TYPES) if (re.test(text)) { docType = name; break; }
   return {
     date: findDate(lines),
     amount: total,
     vat,
+    // the amount agrees with the sums printed on the document
+    sure: !!sums?.sure && near(total, sums.total),
     supplier,
     customer: findCustomer(lines),
     // "51-374232-0": a company number written with dashes, even when its label was misread.
@@ -747,46 +871,73 @@ function parseOne(text, hint = "") {
   };
 }
 
-// Form 106: the year, the employer, the pay and the income tax deducted, by the form's codes (158/172 and 042)
-// or their names. Whatever is not found stays empty, to fill in by hand.
-export function parse106(text) {
-  const lines = String(text || "").split("\n");
-  const CODE = /(?<!\d)(?:158|172|042)(?!\d)/g;
-  const numbers = (l) => [...l.matchAll(/\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{3,7}(?:\.\d+)?/g)]
-    .filter((m) => m[0].includes(",") || !/^(?:158|172|042|106|20\d\d)$/.test(m[0]))
-    .map((m) => ({ at: m.index, n: parseFloat(m[0].replace(/,/g, "")) })).filter((x) => x.n > 0);
-  // A code's number, by the side the numbers stand on in that line: after each code when any number follows
-  // the last code, before each code otherwise (one line may hold several of the form's fields).
-  const byCode = (l, wanted) => {
-    const codes = [...l.matchAll(CODE)], nums = numbers(l), last = codes[codes.length - 1];
-    const after = nums.some((x) => x.at > last.index);
-    for (const c of codes.filter((m) => wanted.includes(m[0]))) {
-      const found = after ? nums.find((x) => x.at > c.index) : nums.filter((x) => x.at < c.index).pop();
-      if (found) return found.n;
-    }
-    return null;
-  };
-  const money = (wanted, name) => {
-    for (const l of lines) {
-      if (![...l.matchAll(CODE)].some((m) => wanted.includes(m[0]))) continue;
-      const n = byCode(l, wanted);
-      if (n != null) return n;
-    }
-    // by the field's name, the number nearest it
-    for (const l of lines) {
-      const m = l.match(name);
-      if (!m) continue;
-      const near = numbers(l).sort((a, b) => Math.abs(a.at - m.index) - Math.abs(b.at - m.index))[0];
-      if (near) return near.n;
-    }
-    return null;
-  };
+// Form 106, every field that goes into the annual report. By the name of each line and its code, from both
+// readings of the form: what they read differently is listed in `doubt` (the larger number is kept, since
+// a misreading usually loses digits). Whatever is not found stays empty, to fill in by hand.
+export const F106_FIELDS = [
+  // [key, label, the line's name, its code]
+  ["gross", "משכורת (158/172)", /(?<![א-ת])משכורת(?!\s*לצורך)/, /(?<!\d)(?:158|172)(?!\d)/],
+  ["studyWage", "שכר לקרן השתלמות (218/219)", /לקרן\s*השתלמות/, /(?<!\d)(?:218|219)(?!\d)/],
+  ["pensionPay", "הפרשות לקופ״ג לקצבה (248/249)", /הפרשות\s*לקופ/, /(?<!\d)(?:248|249)(?!\d)/],
+  ["insuredWage", "השכר המבוטח לקופ״ג (244/245)", /השכר\s*המבוטח/, /(?<!\d)(?:244|245)(?!\d)/],
+  ["niWage", "שכר חייב בביטוח לאומי", /שכר\s*חייב/],
+  ["tax", "מס הכנסה (042)", /(?:^|[|\s\d])מס\s*הכנסה\s*[\d,]/, /(?<!\d)042(?!\d)/],
+  ["pensionEmp", "ניכוי לגמל לקצבה כעמית (045/086)", /ניכוי\s*לקופות/, /(?<!\d)(?:045|086)(?!\d)/],
+  ["union", "דמי טיפול לארגון עובדים", /ארגון\s*עובדים/],
+  ["ni", "דמי ביטוח לאומי", /^(?!.*(?:בריאות|שכר\s*חייב)).*(?<![א-ת])דמי\s*ביטוח/],
+  ["health", "דמי ביטוח בריאות", /דמי\s*ביטוח\s*בריאות/],
+  ["convalescence", "מחיר יום הבראה (011/012)", /ההבראה/],
+  ["wageCut", "הפחתת שכר (011/012)", /הפחתת\s*שכר/],
+  ["pointsValue", "ערך נקודות זיכוי", /נקודות\s*זיכוי/],
+  ["otherCredits", "זיכויים אחרים", /זיכויים\s*אחרים/],
+  ["expensesPay", "תשלומים לכיסוי הוצאות", /לכיסוי\s*הוצאות/],
+  ["overtime", "שעות נוספות, מאמץ מיוחד", /שעות\s*נוספות/],
+];
+const F106_CODES = /(?<!\d)(?:158|172|218|219|248|249|244|245|234|042|045|086|011|012)(?!\d)/g;
+function f106Amount(line, nameRe, codeRe) {
+  // "172/158": the pair of codes goes, and the money is what is left; the last one on the line
+  const rest = line.replace(/(\d{3})\s*\/\s*(\d{3})/g, " ").replace(F106_CODES, " ").replace(/\b2\.\d\d\b/g, " ");
+  const nums = amountsIn(rest).map((x) => x.n);
+  return nums.length && (nameRe.test(line) || codeRe?.test(line)) ? nums[nums.length - 1] : null;
+}
+function f106Reading(text) {
+  const lines = String(text || "").split("\n").map((l) => l.replace(/[‎‏]/g, "").replace(/\s+/g, " ").trim()).filter(Boolean);
+  const out = {};
+  for (const [key, , nameRe, codeRe] of F106_FIELDS) {
+    // the line with its code first: a code is read more surely than a Hebrew name
+    const line = (codeRe && lines.find((l) => codeRe.test(l) && f106Amount(l, nameRe, codeRe) != null)) || lines.find((l) => nameRe.test(l) && f106Amount(l, nameRe, codeRe) != null);
+    out[key] = line ? f106Amount(line, nameRe, codeRe) : null;
+  }
   const all = lines.join(" ");
-  const year = (all.match(/(?:לשנת|שנת\s*(?:ה)?מס)\D{0,10}(20\d\d)/) || all.match(/\b(20\d\d)\b/))?.[1] || "";
-  const employer = (lines.map((l) => l.match(/שם\s*(?:ה)?מעסיק[:\s]+([^\d:(]{2,40})/)?.[1]).find(Boolean) || "").trim();
-  return {
-    year, employer,
-    gross: money(["158", "172"], /סה["״]?כ\s*תשלומים|משכורת/),
-    tax: money(["042"], /מס\s*הכנסה/),
-  };
+  out.year = (all.match(/(?:לשנת|שנת\s*(?:ה)?מס)\D{0,10}(20\d\d)/) || all.match(/\b(20\d\d)\b/))?.[1] || "";
+  out.points = all.match(/נקודות\s*זיכוי\s*(\d\.\d{1,2})/)?.[1] || "";
+  out.taxFile = all.match(/תיק\s*ניכויים\D{0,6}(\d{9})/)?.[1] || "";
+  out.company = all.match(/(?:חברה|ח\.?פ\.?)\D{0,6}(\d{9})/)?.[1] || "";
+  out.idNumber = all.match(/ת\.?\s?ז\.?\D{0,3}(\d{8,9})/)?.[1] || "";
+  // the employer: its name by label, or the top line, the one above the deductions file
+  const file = lines.findIndex((l) => /תיק\s*ניכויים/.test(l));
+  const top = file > 0 ? lines[file - 1].replace(/\s*,.*$/, "").replace(/פירוט.*$/, "").trim() : "";
+  out.employer = (lines.map((l) => l.match(/שם\s*(?:ה)?מעסיק[:\s]+([^\d:(]{2,40})/)?.[1]).find(Boolean) || top).trim();
+  return out;
+}
+// The fund table: name, kind, wage, rate and amount of each line.
+function f106Funds(text) {
+  const rows = [];
+  for (const raw of String(text || "").split("\n")) {
+    const m = raw.replace(/[|‎‏]/g, " ").replace(/\s+/g, " ").match(/^\s*(.*?)\s*([\d,]{5,})\s+(\d{1,2}\.\d{2})\s?%\s*([\d,]+)/);
+    if (m) rows.push({ name: m[1].trim(), wage: parseFloat(m[2].replace(/,/g, "")), rate: +m[3], amount: parseFloat(m[4].replace(/,/g, "")) });
+  }
+  return rows;
+}
+export function parse106(text) {
+  const [first = "", second = ""] = String(text || "").split("\n----\n");
+  const a = f106Reading(first), b = f106Reading(second);
+  const out = { ...a, doubt: [] };
+  for (const [key] of F106_FIELDS) {
+    if (a[key] != null && b[key] != null && a[key] !== b[key]) { out[key] = Math.max(a[key], b[key]); out.doubt.push(key); }
+    else if (a[key] == null) out[key] = b[key];
+  }
+  for (const k of ["year", "points", "taxFile", "company", "idNumber", "employer"]) out[k] = a[k] || b[k];
+  out.funds = f106Funds(first).length >= f106Funds(second).length ? f106Funds(first) : f106Funds(second);
+  return out;
 }

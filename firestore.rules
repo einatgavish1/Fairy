@@ -54,7 +54,7 @@ service cloud.firestore {
           // kind "misc": one of the client's other documents (a rent contract, form 106...); "income": a document the client issued
           && (!('kind' in d) || d.kind in ['', 'misc', 'income'])
           // form 106: what was read from it, or fixed by hand
-          && (!('f106' in d) || (d.f106 is string && d.f106.size() <= 500))
+          && (!('f106' in d) || (d.f106 is string && d.f106.size() <= 2000))
           && (!('title' in d) || (d.title is string && d.title.size() <= 150))
           // driveId: the document's original file in Google Drive
           && (!('driveId' in d) || (d.driveId is string && d.driveId.size() <= 100))

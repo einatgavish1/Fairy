@@ -1,5 +1,5 @@
 import { firebaseConfig, OWNER_EMAILS, AI_READING } from "./firebase-config.js?v=2";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview, pageCount, parse106 } from "./extract.js?v=19";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview, pageCount, parse106, F106_FIELDS } from "./extract.js?v=20";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
 import { ACCOUNTS, EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=6";
 import { fillFromPath } from "./recheck.js?v=7";
@@ -942,6 +942,18 @@ function clientFor(customer) {
 // Hashes being read right now, so a second copy in the same upload is caught before it is saved.
 const inFlight = new Map();
 
+// What is known before reading: whose document it is, and the suppliers people approved (a company number
+// shared by several suppliers is the client's own, and is left out).
+function knownSuppliers() {
+  const seen = new Map(), ids = {};
+  for (const r of records) if (r.checked && r.supplier) seen.set(r.supplier, { name: r.supplier, id: String(r.supplierId || "").replace(/\D/g, "") });
+  for (const k of seen.values()) if (k.id) ids[k.id] = (ids[k.id] || 0) + 1;
+  return [...seen.values()].map((k) => (ids[k.id] > 1 ? { ...k, id: "" } : k));
+}
+const readingContext = (who) => ({ client: who || (client !== ALL ? client : "") || "", known: knownSuppliers() });
+const DOUBT_NAMES = { amount: "בסכום", date: "בתאריך", docNo: "במספר המסמך" };
+const doubtNote = (found) => (found.doubt?.length ? [`שתי הקריאות חלוקות ${found.doubt.map((k) => DOUBT_NAMES[k]).join(" ו")}`] : []);
+
 // Each file: read it, find the details, and save it straight away, marked for review when
 // anything is missing or doubtful. Only an exact copy of a file already in the system is skipped.
 // A PDF of several pages (a year of monthly invoices, say) may be a document per page: each page is read
@@ -1022,7 +1034,7 @@ async function processFile(file, path, batch, page = null) {
   } else {
     el.querySelector(".thumb").innerHTML = '<span class="soon">📄</span>';
   }
-  let found = failed ? {} : parseText(text, hint, alt);
+  let found = failed ? {} : parseText(text, hint, alt, readingContext($("uploadClient").value));
   // Claude reads the picture; what it finds wins over the local reading, which stays when it fails.
   const ai = preview ? await aiReading(preview, path, (label) => status(0.95, label)) : null;
   if (ai) found = { ...found, ...ai.fields, category: found.donation ? "תרומות" : ai.fields.category ?? found.category };
@@ -1056,7 +1068,7 @@ async function processFile(file, path, batch, page = null) {
   // Claude's account, from the items it saw, unless one was chosen by hand.
   if (ai?.account && rec.accountBy !== "hand") Object.assign(rec, { account: ai.account, accountBy: "auto" });
   const why = [...reviewReasons(rec, { exceptId: reread?.id, noText: !ai && !failed && !text.trim() && !alt.trim(), failed: ai ? "" : failed }),
-    ...(ai?.unclear ? [ai.unclear] : [])];
+    ...(ai?.unclear ? [ai.unclear] : []), ...doubtNote(ai ? {} : found)];
   if (ai) failed = "";
   rec.status = failed ? "failed" : why.length ? "review" : "ok";
   rec.reviewWhy = why.join(" · ");
@@ -1665,7 +1677,7 @@ function dialogPicture(id, src, r) {
       // Claude first; the reading in the browser only when it is not there.
       const ai = await aiReading(src, r.fileName || "", (label) => (btn.textContent = label));
       const found = ai ? ai.fields : await rereadPreview(src, 0, (p) => (btn.textContent = `📖 קורא… ${Math.round(p * 100)}%`))
-        .then((res) => parseText(res.text, "", res.alt));
+        .then((res) => parseText(res.text, "", res.alt, readingContext(r.client)));
       if (ai?.account) found.account = ai.account;
       // What the new reading found replaces what was read before; the client stays.
       let n = 0;
@@ -2632,13 +2644,18 @@ async function openInDrive(r) {
 
 // Form 106: what was read from it (or fixed by hand, kept with the document as f106).
 function form106(r) {
-  try { if (r.f106) return JSON.parse(r.f106); } catch { /* read again below */ }
-  return parse106(r.text);
+  const read = parse106(r.text);
+  try { if (r.f106) return { ...read, ...JSON.parse(r.f106) }; } catch { /* as read */ }
+  return read;
 }
 const f106Inputs = (r) => {
-  const f = form106(r);
-  const box = (k, label, v, num) => `<label class="f106">${label}<input data-f106="${k}" value="${esc(v ?? "")}"${num ? ' inputmode="decimal" dir="ltr"' : ""}></label>`;
-  return `<div class="f106-box">${box("year", "שנה", f.year, 1)}${box("employer", "מעסיק", f.employer)}${box("gross", "ברוטו (158/172)", f.gross, 1)}${box("tax", "מס שנוכה (042)", f.tax, 1)}</div>`;
+  const f = form106(r), doubt = f.doubt || [];
+  const box = (k, label, v, num) => `<label class="f106${doubt.includes(k) ? " doubt" : ""}"${doubt.includes(k) ? ' title="שתי הקריאות חלוקות: לבדוק מול הטופס"' : ""}>${label}<input data-f106="${k}" value="${esc(v ?? "")}"${num ? ' inputmode="decimal" dir="ltr"' : ""}></label>`;
+  const funds = (f.funds || []).map((x) => `<tr><td>${esc(x.name)}</td><td class="num">${fmt(x.wage)}</td><td class="num">${x.rate}%</td><td class="num">${fmt(x.amount)}</td></tr>`).join("");
+  return `<details class="f106-all"${doubt.length ? " open" : ""}><summary>📄 נתוני הטופס${doubt.length ? ` · ⚠️ ${doubt.length} לבדיקה` : ""}</summary>
+    <div class="f106-box">${box("year", "שנה", f.year, 1)}${box("employer", "מעסיק", f.employer)}${box("taxFile", "תיק ניכויים", f.taxFile, 1)}${box("idNumber", "ת.ז", f.idNumber, 1)}${box("points", "נקודות זיכוי", f.points, 1)}
+    ${F106_FIELDS.map(([k, label]) => box(k, label, f[k], 1)).join("")}</div>
+    ${funds ? `<table class="f106-funds"><thead><tr><th>קופה</th><th>שכר</th><th>שיעור</th><th>הפרשה</th></tr></thead><tbody>${funds}</tbody></table>` : ""}</details>`;
 };
 
 function renderMisc() {
@@ -2711,8 +2728,11 @@ $("mList").addEventListener("change", async (e) => {
   if (e.target.dataset.f106) {
     const r = miscDocs.find((x) => x.id === card.dataset.id);
     const num = (v) => { const n = parseFloat(String(v).replace(/,/g, "")); return isNaN(n) ? null : n; };
-    const f = { ...form106(r), [e.target.dataset.f106]: ["gross", "tax"].includes(e.target.dataset.f106) ? num(e.target.value) : e.target.value.trim() };
-    try { await store.update(r.id, { f106: JSON.stringify(f).slice(0, 500) }); toast("נשמר"); } catch (err) { toast("השמירה נכשלה: " + err.message); }
+    const k = e.target.dataset.f106, f = form106(r);
+    f[k] = F106_FIELDS.some(([x]) => x === k) ? num(e.target.value) : e.target.value.trim();
+    f.doubt = (f.doubt || []).filter((x) => x !== k); // checked by hand
+    const { funds, ...rest } = f; // the fund table is read from the text each time
+    try { await store.update(r.id, { f106: JSON.stringify(rest).slice(0, 1800) }); toast("נשמר"); } catch (err) { toast("השמירה נכשלה: " + err.message); }
     return;
   }
   const upd = e.target.classList.contains("m-title") ? { title: e.target.value.trim().slice(0, 150) }
@@ -2728,7 +2748,7 @@ async function moveToExpenses(id) {
   const r = miscDocs.find((x) => x.id === id);
   if (!r) return;
   const [text = "", alt = ""] = String(r.text || "").split("\n----\n");
-  const found = parseText(text, "", alt);
+  const found = parseText(text, "", alt, readingContext(r.client));
   const rec = {
     kind: "", client: r.client, customer: found.customer || "",
     date: found.date || r.date || "", supplier: found.supplier || "", supplierId: found.supplierId || "",
@@ -2973,14 +2993,14 @@ async function addIncome(files) {
     try { ({ text, alt = "", preview, hint = "" } = await oneAtATime(() => readFile(file, () => {}))); }
     catch (err) { say(`❌ לא נקרא: ${esc(err.message)}`, "failed"); continue; }
     if (preview) el.querySelector(".thumb").innerHTML = `<img src="${preview}" alt="">`;
-    const found = parseText(text, hint, alt);
+    const found = parseText(text, hint, alt, { client: who });
     const rec = {
       client: who, kind: "income", customer: found.customer || "", date: found.date || "", docType: found.docType || "",
       docNo: found.docNo || "", amount: found.amount ?? null, vat: found.vat ?? null, details: found.details || "",
       supplier: "", supplierId: "", category: "", fileName: file.name, fileHash: hash,
       text: [text, alt].filter(Boolean).join("\n----\n").slice(0, 15000),
     };
-    const why = incomeReasons(rec);
+    const why = [...incomeReasons(rec), ...doubtNote(found)];
     if (found.currency) why.push(`במטבע ${found.currency}: לבדוק את הסכום בשקלים`);
     rec.status = why.length ? "review" : "ok";
     rec.reviewWhy = why.join(" · ");

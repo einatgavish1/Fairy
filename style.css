@@ -579,3 +579,10 @@ input[type="number"]:not([name="pct"])::-webkit-outer-spin-button { -webkit-appe
 .f106-box { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
 .f106 { display: grid; gap: 2px; font-size: 12px; }
 .f106 input { padding: 4px 8px; min-width: 0; }
+
+/* form 106: every field; what the two readings differ on stands out */
+.f106-all summary { cursor: pointer; font-weight: 700; margin: 6px 0; }
+.f106.doubt input { border: 2px solid #ffcc00; background: #fff6cf; }
+.f106.doubt { color: #ffcc00; }
+.f106-funds { width: 100%; font-size: 12px; margin-top: 6px; }
+.f106-funds th, .f106-funds td { padding: 2px 4px; }
