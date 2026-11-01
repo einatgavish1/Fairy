@@ -1,8 +1,8 @@
 import { firebaseConfig, OWNER_EMAILS, AI_READING } from "./firebase-config.js?v=2";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview, pageCount, parse106, F106_FIELDS, f106Checks, findOnPicture } from "./extract.js?v=23";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview, pageCount, parse106, f106Checks, findOnPicture } from "./extract.js?v=24";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
 import { ACCOUNTS, EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=7";
-import { fillFromPath } from "./recheck.js?v=10";
+import { fillFromPath } from "./recheck.js?v=11";
 import { parseComparative, comparativeFromDocs, buildFiling, filingSheet, comparativeSheet, lineOf } from "./report.js?v=3";
 
 const $ = (id) => document.getElementById(id);
@@ -2684,15 +2684,6 @@ async function saveForm106(r, change) {
   await store.update(r.id, { f106 });
   r.f106 = f106;
 }
-const f106Inputs = (r) => {
-  const f = form106(r), doubt = f.doubt || [];
-  const box = (k, label, v, num) => `<label class="f106${doubt.includes(k) ? " doubt" : ""}"${doubt.includes(k) ? ' title="שתי הקריאות חלוקות: לבדוק מול הטופס"' : ""}>${label}<input data-f106="${k}" value="${esc(v ?? "")}"${num ? ' inputmode="decimal" dir="ltr"' : ""}></label>`;
-  const funds = (f.funds || []).map((x) => `<tr><td>${esc(x.name)}</td><td class="num">${fmt(x.wage)}</td><td class="num">${x.rate}%</td><td class="num">${fmt(x.amount)}</td></tr>`).join("");
-  return `<details class="f106-all"${doubt.length ? " open" : ""}><summary>📄 נתוני הטופס${doubt.length ? ` · ⚠️ ${doubt.length} לבדיקה` : ""}</summary>
-    <div class="f106-box">${box("year", "שנה", f.year, 1)}${box("employer", "מעסיק", f.employer)}${box("taxFile", "תיק ניכויים", f.taxFile, 1)}${box("idNumber", "ת.ז", f.idNumber, 1)}${box("points", "נקודות זיכוי", f.points, 1)}
-    ${F106_FIELDS.map(([k, label]) => box(k, label, f[k], 1)).join("")}</div>
-    ${funds ? `<table class="f106-funds"><thead><tr><th>קופה</th><th>שכר</th><th>שיעור</th><th>הפרשה</th></tr></thead><tbody>${funds}</tbody></table>` : ""}</details>`;
-};
 
 function renderMisc() {
   const none = !client || client === ALL;
@@ -2715,7 +2706,6 @@ function renderMisc() {
       <div class="g-info">
         <input class="m-title" value="${esc(r.title || r.fileName || "")}" title="שם המסמך" aria-label="שם המסמך">
         <select class="m-type" aria-label="סוג המסמך">${MISC_NAMES.map((n) => `<option${n === r.docType ? " selected" : ""}>${esc(n)}</option>`).join("")}</select>
-        ${r.docType === "טופס 106" ? f106Inputs(r) : ""}
         <span class="g-foot"><small>${esc([showDate(r.date), r.fileName].filter(Boolean).join(" · "))}</small>
           <span>${r.docType === "טופס 106" ? "" : `<button type="button" class="ghost m-move" data-mmove="${esc(r.id)}" title="להעביר למסמכי ההוצאות ולרשום בפקודות היומן">➡️ להוצאות</button>`}
           <button type="button" class="ghost m-whole" data-mwhole="${esc(r.id)}" title="הקובץ המלא בדרייב">📄 כל הקובץ</button>
@@ -2762,14 +2752,6 @@ $("mList").addEventListener("click", async (e) => {
 $("mList").addEventListener("change", async (e) => {
   const card = e.target.closest("[data-id]");
   if (!card) return;
-  if (e.target.dataset.f106) {
-    const r = miscDocs.find((x) => x.id === card.dataset.id);
-    const k = e.target.dataset.f106, f = form106(r);
-    const value = F106_FIELDS.some(([x]) => x === k) ? numOf(e.target.value) : e.target.value.trim();
-    // checked by hand
-    try { await saveForm106(r, { [k]: value, doubt: (f.doubt || []).filter((x) => x !== k) }); toast("נשמר"); } catch (err) { toast("השמירה נכשלה: " + err.message); }
-    return;
-  }
   const upd = e.target.classList.contains("m-title") ? { title: e.target.value.trim().slice(0, 150) }
     : e.target.classList.contains("m-type") ? { docType: e.target.value } : null;
   if (!upd) return;
@@ -2793,7 +2775,7 @@ const LIRAM_ROWS = [
   ["75", "לקצבה כ״עמית שכיר״", "045", "086", "pensionEmp"],
   ["84", "מס ההכנסה שנוכה", "1020", "1024", "tax"],
 ];
-const liram = { year: "", done: new Set(), spots: new Map(), pics: new Map(), busy: false, form: "" };
+const liram = { year: "", done: new Set(), spots: new Map(), pics: new Map(), busy: false, form: "", okNums: new Set() };
 // a form of another person goes to the other spouse's column, unless chosen by hand
 const lrForms = () => {
   const all = miscDocs.filter(inScope).filter((r) => r.docType === "טופס 106").map((r) => ({ r, f: form106(r) })).filter((x) => (x.f.year || "") === liram.year);
@@ -2847,8 +2829,8 @@ function renderLiram() {
   });
   renderStage(forms);
 }
-// Form over form: the picture of the form as it is, and over each number on it the value as read, shown in blue
-// while the mouse is on it. So the two are compared at a glance, and the number drags from where it stands.
+// Form over form: the picture of the form as it is, and over every number on it the same number as read, shown
+// in blue while the mouse is on it. So the two are compared at a glance, and it drags from where it stands.
 function renderStage(forms) {
   $("lrStage").hidden = !$("liramDlg").classList.contains("full");
   $("lrFormPick").innerHTML = forms.map((x) => `<option value="${esc(x.r.id)}">${esc(x.f.employer || x.r.title || "")}</option>`).join("");
@@ -2862,17 +2844,26 @@ function renderStage(forms) {
   // all at one height, each centred on its number: a slanted scan gives boxes of different heights
   const tall = Object.values(spots).filter((x) => x.exact).map((x) => x.bottom - x.top).sort((p, q) => p - q);
   const high = tall[tall.length >> 1] || 0.012;
-  $("lrStage").innerHTML = `<div class="lr-sheet"><img src="${img.src}" alt="">${LIRAM_ROWS.map(([, name, a, b, k]) => {
+  const place = (at) => `top:${((at.top + at.bottom - high) / 2) * 100}%;left:${at.left * 100}%;min-width:${(at.right - at.left) * 100}%;height:${high * 100}%;font-size:${(high * ratio * 82).toFixed(2)}cqw`;
+  let locked = 0;
+  const known = LIRAM_ROWS.map(([, name, a, b, k]) => {
     const n = cur.f[k], at = spots[k];
     if (n == null || !at) return "";
     const code = cur.side === "a" ? a : b, why = lrDoubt(cur, k), mark = `${code}:${k}`;
-    // a value of several forms goes in as their sum, from the table
-    const solo = forms.filter((x) => x.side === cur.side && x.f[k] != null).length === 1;
-    const free = solo && !why;
-    return `<div class="lr-chip${why ? " locked" : ""}${at.exact ? "" : " guess"}${liram.done.has(mark) ? " done" : ""}" data-id="${esc(cur.r.id)}" data-k="${k}"${free ? ` data-copy="${n}" data-code="${mark}" draggable="true"` : ""}
-      style="top:${((at.top + at.bottom - high) / 2) * 100}%;left:${at.left * 100}%;min-width:${(at.right - at.left) * 100}%;height:${high * 100}%;font-size:${(high * ratio * 82).toFixed(2)}cqw"
-      title="${esc(code)} · ${esc(name)}${why ? ` · ${esc(why)}` : solo ? "" : " · כמה טפסים: הסכום המחובר נגרר מהרשימה"}"><span>${grouped(n)}</span>${why ? '<button type="button" data-lrok title="בדקתי מול הטופס">✔</button>' : ""}</div>`;
-  }).join("")}</div>`;
+    if (why) locked++;
+    return `<div class="lr-chip${why ? " locked" : ""}" data-id="${esc(cur.r.id)}" data-k="${k}"${why ? "" : ` data-copy="${n}" data-code="${mark}" draggable="true"`} style="${place(at)}"
+      title="${esc(code)} · ${esc(name)}${why ? ` · ${esc(why)}` : ""}"><span>${grouped(n)}</span>${why ? '<button type="button" data-lrok title="בדקתי מול הטופס">✔</button>' : ""}</div>`;
+  }).join("");
+  // the rest of the page, found on the saved picture: free to drag only if the document's own reading agrees
+  const read = String(cur.r.text || "").replace(/,/g, "");
+  const others = (spots.others || []).map((o) => {
+    const digits = o.text.replace(/,/g, ""), key = `${cur.r.id}:${digits}`;
+    const sure = liram.okNums.has(key) || new RegExp(`(?<![\d.])${digits.replace(".", "\.")}(?!\d)`).test(read);
+    if (!sure) locked++;
+    return `<div class="lr-chip${sure ? "" : " locked"}" ${sure ? `data-copy="${esc(digits)}" draggable="true"` : `data-num="${esc(key)}" title="לא תואם לקריאת המסמך: לבדוק מול הטופס"`} style="${place(o)}"><span>${esc(o.text)}</span>${sure ? "" : '<button type="button" data-lrok title="בדקתי מול הטופס">✔</button>'}</div>`;
+  }).join("");
+  $("lrStage").innerHTML = `<div class="lr-sheet"><img src="${img.src}" alt="">${known}${others}</div>`;
+  $("lrLocked").textContent = locked ? `⚠️ ${locked} לבדיקה: צהוב במעבר עכבר` : "";
   lrFit();
 }
 // At 100% the whole form fits the window.
@@ -2923,17 +2914,18 @@ $("m106Sum").addEventListener("click", (e) => {
   if (!btn) return;
   liram.year = btn.dataset.liram;
   liram.done.clear();
-  renderLiram();
   $("liramDlg").showModal();
+  lrFull(true);
   lrLocate();
 });
 $("lrClose").addEventListener("click", () => $("liramDlg").close());
-$("lrFull").addEventListener("click", () => {
-  const full = $("liramDlg").classList.toggle("full");
-  $("lrFull").textContent = full ? "↩️ חזרה לרשימה" : "🔍 מסך מלא: טופס על טופס";
+function lrFull(full) {
+  $("liramDlg").classList.toggle("full", full);
+  $("lrFull").textContent = full ? "📋 רשימה ותיקון" : "📄 הטופס המלא";
   $("lrStageTools").hidden = !full;
   renderLiram();
-});
+}
+$("lrFull").addEventListener("click", () => lrFull(!$("liramDlg").classList.contains("full")));
 $("lrZoom").addEventListener("input", (e) => {
   $("lrStage").style.setProperty("--zoom", e.target.value / 100);
   $("lrZoomOut").textContent = `${e.target.value}%`;
@@ -2941,7 +2933,7 @@ $("lrZoom").addEventListener("input", (e) => {
 $("lrFormPick").addEventListener("change", (e) => { liram.form = e.target.value; renderLiram(); });
 $("liramDlg").addEventListener("click", async (e) => {
   const val = e.target.closest("[data-copy]");
-  if (val && !val.disabled && !e.target.closest("[data-lrok]")) {
+  if (val && !val.disabled && !val.classList.contains("lr-chip")) {
     if (!(await lrCopy(val.dataset.copy))) { toast("ההעתקה נכשלה. אפשר לגרור את המספר לתא"); return; }
     liram.done.add(val.dataset.code);
     renderLiram();
@@ -2952,6 +2944,8 @@ $("liramDlg").addEventListener("click", async (e) => {
   if (crop) { const img = liram.pics.get(crop.closest("[data-id]").dataset.id); if (img) zoom(img.src); return; }
   const ok = e.target.closest("[data-lrok]");
   if (!ok) return;
+  const num = ok.closest("[data-num]");
+  if (num) { liram.okNums.add(num.dataset.num); renderLiram(); return; }
   const box = ok.closest("[data-id]"), r = miscDocs.find((x) => x.id === box.dataset.id);
   if (!r) return;
   const f = form106(r), k = box.dataset.k;
@@ -2976,7 +2970,7 @@ $("liramDlg").addEventListener("dragstart", (e) => {
 });
 $("liramDlg").addEventListener("dragend", (e) => {
   const val = e.target.closest?.("[data-copy]");
-  if (val && e.dataTransfer.dropEffect !== "none") { liram.done.add(val.dataset.code); renderLiram(); }
+  if (val?.dataset.code && e.dataTransfer.dropEffect !== "none") { liram.done.add(val.dataset.code); renderLiram(); }
 });
 
 // A document of the other documents that is an expense after all (a receipt uploaded there): dragged onto

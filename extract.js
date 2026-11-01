@@ -285,7 +285,7 @@ export async function rotatePreview(dataUrl, deg) {
 // Reads a saved picture again: turned by deg, or turned the right way up by itself when deg is null.
 // Where the values of a form 106 stand on its saved picture, as parts of its size: { key: { top, bottom, left,
 // right, exact } }. Not exact: the number is not on the picture as read, and this is where its line has it.
-// A value not listed has no place found at all.
+// A value not listed has no place found at all. `others` is every other number on the page, with its `text`.
 export async function findOnPicture(dataUrl, f, onProgress = () => {}) {
   const img = await loadImage(dataUrl);
   const k = Math.max(1, 2200 / Math.max(img.naturalWidth, img.naturalHeight));
@@ -297,6 +297,12 @@ export async function findOnPicture(dataUrl, f, onProgress = () => {}) {
   x.filter = "grayscale(1) contrast(1.25)";
   x.drawImage(img, 0, 0, c.width, c.height);
   const spot = (b, exact) => ({ top: b.y0 / c.height, bottom: b.y1 / c.height, left: b.x0 / c.width, right: b.x1 / c.width, exact });
+  // only the digits of a word: a number may be stuck to the name beside it
+  const digitsBox = (w) => {
+    const signs = (w.symbols || []).filter((y) => /[\d,.]/.test(y.text)).map((y) => y.bbox);
+    if (!signs.length) return w.bbox;
+    return { x0: Math.min(...signs.map((b) => b.x0)), x1: Math.max(...signs.map((b) => b.x1)), y0: Math.min(...signs.map((b) => b.y0)), y1: Math.max(...signs.map((b) => b.y1)) };
+  };
   const values = F106_FIELDS.filter(([key]) => f[key] != null), out = {};
   let lines = [];
   const ownLines = ([, , nameRe, codeRe], rows) => rows.filter((l) => nameRe.test(l.text) || codeRe?.test(l.text));
@@ -312,7 +318,7 @@ export async function findOnPicture(dataUrl, f, onProgress = () => {}) {
       const isIt = (w) => w.text.replace(/\D/g, "") === digits;
       // on the value's own line first: the same number may stand on two lines
       const word = ownLines(field, rows).flatMap((l) => l.words).find(isIt) || rows.flatMap((l) => l.words).find(isIt);
-      const box = (word || rows.find((l) => alone.test(l.text.replace(/[,\s]/g, ""))))?.bbox;
+      const box = word ? digitsBox(word) : rows.find((l) => alone.test(l.text.replace(/[,\s]/g, "")))?.bbox;
       if (box) out[field[0]] = spot(box, true);
     }
   }
@@ -322,7 +328,15 @@ export async function findOnPicture(dataUrl, f, onProgress = () => {}) {
     const line = ownLines(field, lines)[0];
     if (!out[field[0]] && line && col) out[field[0]] = { ...spot(line.bbox, false), left: col.left, right: col.right };
   }
-  return out;
+  const others = [], taken = Object.values(out);
+  const over = (p, q) => p.left < q.right && q.left < p.right && p.top < q.bottom && q.top < p.bottom;
+  for (const w of lines.flatMap((l) => l.words)) {
+    const text = w.text.match(/\d[\d,]*(?:\.\d+)?/)?.[0];
+    if (!text) continue;
+    const at = spot(digitsBox(w), true);
+    if (![...taken, ...others].some((x) => over(x, at))) others.push({ ...at, text });
+  }
+  return { ...out, others };
 }
 
 export async function rereadPreview(dataUrl, deg = null, onProgress = () => {}) {

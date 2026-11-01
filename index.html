@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=51">
+<link rel="stylesheet" href="style.css?v=52">
 </head>
 <body>
 
@@ -498,10 +498,12 @@
   <div class="lr-head"><h2 id="lrTitle"></h2><button type="button" class="ghost" id="lrClose">סגירה</button></div>
   <p class="hint">פותחים את הדף ליד לירם. לוחצים על מספר ועוברים ל-Ctrl+V בתא שלו בלירם, או גוררים אותו לתא. מספר שהועתק נצבע באפור. מספר בצהוב נעול עד שמשווים אותו לטופס ומאשרים. במסך המלא רואים את הטופס המקורי כמו שהוא: מעבירים את העכבר על מספר, הוא נצבע בכחול כפי שנקרא, ומשם גוררים אותו.</p>
   <div class="lr-tools">
-    <button type="button" class="primary" id="lrFull">🔍 מסך מלא: טופס על טופס</button>
+    <button type="button" class="ghost" id="lrFull"></button>
     <span class="lr-stage-tools" id="lrStageTools" hidden>
+      <b>גוררים מספר מהטופס ישר לתא בלירם</b>
       <select id="lrFormPick" title="איזה טופס להציג"></select>
       <label>גודל הטופס <input type="range" id="lrZoom" min="100" max="300" step="10" value="100"> <output id="lrZoomOut">100%</output></label>
+      <span id="lrLocked"></span>
     </span>
   </div>
   <p class="soon" id="lrBusy" hidden></p>
@@ -523,6 +525,6 @@
 <div id="toast" popover="manual" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=72"></script>
+<script type="module" src="app.js?v=73"></script>
 </body>
 </html>
