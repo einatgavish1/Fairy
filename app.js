@@ -2962,6 +2962,16 @@ $("liramDlg").addEventListener("change", async (e) => {
     renderLiram();
   } catch (err) { toast("השמירה נכשלה: " + err.message); }
 });
+// Liram takes no drag: a right click on a number copies it at once, for Ctrl+V in the cell.
+$("liramDlg").addEventListener("contextmenu", async (e) => {
+  const chip = e.target.closest?.(".lr-chip");
+  if (!chip) return;
+  e.preventDefault();
+  if (!chip.dataset.copy) { toast("המספר נעול: לבדוק מול הטופס ולאשר ב-✔"); return; }
+  if (!(await lrCopy(chip.dataset.copy))) { toast("ההעתקה נכשלה"); return; }
+  if (chip.dataset.code) liram.done.add(chip.dataset.code);
+  toast(`${chip.querySelector("span").textContent} הועתק. עכשיו Ctrl+V בתא בלירם`);
+});
 $("liramDlg").addEventListener("dragstart", (e) => {
   const val = e.target.closest?.("[data-copy]");
   if (!val) return;
