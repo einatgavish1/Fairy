@@ -1,8 +1,8 @@
 import { firebaseConfig, OWNER_EMAILS, AI_READING } from "./firebase-config.js?v=2";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview, pageCount, parse106, f106Checks, findOnPicture } from "./extract.js?v=24";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview, pageCount, parse106, f106Checks, findOnPicture, numberInReading } from "./extract.js?v=28";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
 import { ACCOUNTS, EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=7";
-import { fillFromPath } from "./recheck.js?v=11";
+import { fillFromPath } from "./recheck.js?v=12";
 import { parseComparative, comparativeFromDocs, buildFiling, filingSheet, comparativeSheet, lineOf } from "./report.js?v=3";
 
 const $ = (id) => document.getElementById(id);
@@ -2760,7 +2760,7 @@ $("mList").addEventListener("change", async (e) => {
 
 // Form 106 beside Liram: the values of a year's forms in the order of Liram's rows, one number at a time to
 // paste or drag into its cell. Liram has no import, and a cell takes one value. A number that cannot be vouched
-// for stays locked until it is compared with the line of the form shown under it.
+// for is shown in red, to compare with the form.
 const LIRAM_ROWS = [
   // [Liram's row, its name, the registered spouse's code, the other's, the value]
   ["3", "ממשכורת או שכר עבודה", "158", "172", "gross"],
@@ -2775,7 +2775,7 @@ const LIRAM_ROWS = [
   ["75", "לקצבה כ״עמית שכיר״", "045", "086", "pensionEmp"],
   ["84", "מס ההכנסה שנוכה", "1020", "1024", "tax"],
 ];
-const liram = { year: "", done: new Set(), spots: new Map(), pics: new Map(), busy: false, form: "", okNums: new Set() };
+const liram = { year: "", done: new Set(), spots: new Map(), pics: new Map(), busy: false, form: "" };
 // a form of another person goes to the other spouse's column, unless chosen by hand
 const lrForms = () => {
   const all = miscDocs.filter(inScope).filter((r) => r.docType === "טופס 106").map((r) => ({ r, f: form106(r) })).filter((x) => (x.f.year || "") === liram.year);
@@ -2795,9 +2795,9 @@ function lrDoubt({ r, f }, k) {
 }
 function lrCell(code, k, list) {
   if (!list.length) return '<td class="lr-none">—</td>';
-  const total = list.reduce((t, x) => t + x.f[k], 0), locked = list.some((x) => lrDoubt(x, k));
+  const total = list.reduce((t, x) => t + x.f[k], 0), unsure = list.some((x) => lrDoubt(x, k));
   const mark = `${code}:${k}`, done = liram.done.has(mark) ? " done" : "";
-  return `<td><button type="button" class="lr-val${locked ? " locked" : ""}${done}" data-copy="${total}" data-code="${mark}"${locked ? ' disabled title="לבדוק מול הטופס ולאשר"' : ' draggable="true" title="לחיצה מעתיקה, ואפשר גם לגרור"'}><small>${code}</small> <b>${grouped(total)}</b></button></td>`;
+  return `<td><button type="button" class="lr-val${unsure ? " unsure" : ""}${done}" data-copy="${total}" data-code="${mark}" draggable="true" title="${unsure ? "לא בטוח: להשוות לטופס. " : ""}לחיצה מעתיקה"><small>${code}</small> <b>${grouped(total)}</b></button></td>`;
 }
 function renderLiram() {
   const forms = lrForms(), used = LIRAM_ROWS.filter((row) => forms.some((x) => x.f[row[4]] != null));
@@ -2830,7 +2830,7 @@ function renderLiram() {
   renderStage(forms);
 }
 // Form over form: the picture of the form as it is, and over every number on it the same number as read, shown
-// in blue while the mouse is on it. So the two are compared at a glance, and it drags from where it stands.
+// in blue while the mouse is on it, on every line that has a code in the form's "שדה/סעיף" column. So the two are compared at a glance, and it drags from where it stands.
 function renderStage(forms) {
   $("lrStage").hidden = !$("liramDlg").classList.contains("full");
   $("lrFormPick").innerHTML = forms.map((x) => `<option value="${esc(x.r.id)}">${esc(x.f.employer || x.r.title || "")}</option>`).join("");
@@ -2845,25 +2845,26 @@ function renderStage(forms) {
   const tall = Object.values(spots).filter((x) => x.exact).map((x) => x.bottom - x.top).sort((p, q) => p - q);
   const high = tall[tall.length >> 1] || 0.012;
   const place = (at) => `top:${((at.top + at.bottom - high) / 2) * 100}%;left:${at.left * 100}%;min-width:${(at.right - at.left) * 100}%;height:${high * 100}%;font-size:${(high * ratio * 82).toFixed(2)}cqw`;
-  let locked = 0;
+  // the big number stands above the small one, or under it at the top of the page
+  const low = (at) => (at.top < 0.08 ? " low" : "");
+  let unsure = 0;
   const known = LIRAM_ROWS.map(([, name, a, b, k]) => {
     const n = cur.f[k], at = spots[k];
     if (n == null || !at) return "";
-    const code = cur.side === "a" ? a : b, why = lrDoubt(cur, k), mark = `${code}:${k}`;
-    if (why) locked++;
-    return `<div class="lr-chip${why ? " locked" : ""}" data-id="${esc(cur.r.id)}" data-k="${k}"${why ? "" : ` data-copy="${n}" data-code="${mark}" draggable="true"`} style="${place(at)}"
-      title="${esc(code)} · ${esc(name)}${why ? ` · ${esc(why)}` : ""}"><span>${grouped(n)}</span>${why ? '<button type="button" data-lrok title="בדקתי מול הטופס">✔</button>' : ""}</div>`;
+    const code = cur.side === "a" ? a : b, why = lrDoubt(cur, k);
+    if (why) unsure++;
+    return `<div class="lr-chip${why ? " unsure" : ""}${low(at)}" data-copy="${n}" data-code="${code}:${k}" draggable="true" style="${place(at)}"
+      title="${esc(code)} · ${esc(name)}${why ? ` · ${esc(why)}` : ""}"><span>${grouped(n)}</span></div>`;
   }).join("");
-  // the rest of the page, found on the saved picture: free to drag only if the document's own reading agrees
+  // the other lines with a code on the form: red unless the document's own reading agrees
   const read = String(cur.r.text || "").replace(/,/g, "");
   const others = (spots.others || []).map((o) => {
-    const digits = o.text.replace(/,/g, ""), key = `${cur.r.id}:${digits}`;
-    const sure = liram.okNums.has(key) || new RegExp(`(?<![\d.])${digits.replace(".", "\.")}(?!\d)`).test(read);
-    if (!sure) locked++;
-    return `<div class="lr-chip${sure ? "" : " locked"}" ${sure ? `data-copy="${esc(digits)}" draggable="true"` : `data-num="${esc(key)}" title="לא תואם לקריאת המסמך: לבדוק מול הטופס"`} style="${place(o)}"><span>${esc(o.text)}</span>${sure ? "" : '<button type="button" data-lrok title="בדקתי מול הטופס">✔</button>'}</div>`;
+    const digits = o.text.replace(/,/g, ""), sure = numberInReading(digits, read);
+    if (!sure) unsure++;
+    return `<div class="lr-chip${sure ? "" : " unsure"}${low(o)}" data-copy="${esc(digits)}" draggable="true"${sure ? "" : ' title="לא תואם לקריאת המסמך: להשוות לטופס"'} style="${place(o)}"><span>${esc(o.text)}</span></div>`;
   }).join("");
   $("lrStage").innerHTML = `<div class="lr-sheet"><img src="${img.src}" alt="">${known}${others}</div>`;
-  $("lrLocked").textContent = locked ? `⚠️ ${locked} לבדיקה: צהוב במעבר עכבר` : "";
+  $("lrLocked").textContent = unsure ? `🔴 ${unsure} לא בטוחים: להשוות לטופס` : "";
   lrFit();
 }
 // At 100% the whole form fits the window.
@@ -2891,12 +2892,22 @@ async function lrLocate() {
       await img.decode();
       liram.pics.set(r.id, img);
       if ($("liramDlg").open) renderLiram();
-      liram.spots.set(r.id, await findOnPicture(src, f, (x) => { $("lrBusy").textContent = `בודק את המספרים מול תמונת הטופס… ${Math.round(x * 100)}%`; }));
+      liram.spots.set(r.id, await findOnPicture(src, f, r.text, (x) => { $("lrBusy").textContent = `בודק את המספרים מול תמונת הטופס… ${Math.round(x * 100)}%`; }));
     } catch (err) { toast("הבדיקה מול התמונה נכשלה: " + err.message); }
   }
   liram.busy = false;
   $("lrBusy").hidden = true;
   if ($("liramDlg").open) renderLiram();
+}
+// Said beside the number itself, where the eyes are.
+function lrCopied(el, text) {
+  const box = $("lrCopied"), at = el.getBoundingClientRect();
+  box.textContent = `✓ ${text} הועתק`;
+  box.hidden = false;
+  box.style.top = `${Math.min(at.bottom + 8, innerHeight - box.offsetHeight - 8)}px`;
+  box.style.left = `${Math.max(8, Math.min(at.left, innerWidth - box.offsetWidth - 8))}px`;
+  clearTimeout(lrCopied.timer);
+  lrCopied.timer = setTimeout(() => { box.hidden = true; }, 1800);
 }
 // The clipboard, or a browser's older way where a page is not allowed it.
 async function lrCopy(text) {
@@ -2936,16 +2947,14 @@ $("liramDlg").addEventListener("click", async (e) => {
   if (val && !val.disabled && !val.classList.contains("lr-chip")) {
     if (!(await lrCopy(val.dataset.copy))) { toast("ההעתקה נכשלה. אפשר לגרור את המספר לתא"); return; }
     liram.done.add(val.dataset.code);
-    renderLiram();
-    toast(`${grouped(+val.dataset.copy)} הועתק. עכשיו Ctrl+V בתא בלירם`);
+    lrCopied(val, grouped(+val.dataset.copy));
+    val.classList.add("done");
     return;
   }
   const crop = e.target.closest("canvas[data-crop]");
   if (crop) { const img = liram.pics.get(crop.closest("[data-id]").dataset.id); if (img) zoom(img.src); return; }
   const ok = e.target.closest("[data-lrok]");
   if (!ok) return;
-  const num = ok.closest("[data-num]");
-  if (num) { liram.okNums.add(num.dataset.num); renderLiram(); return; }
   const box = ok.closest("[data-id]"), r = miscDocs.find((x) => x.id === box.dataset.id);
   if (!r) return;
   const f = form106(r), k = box.dataset.k;
@@ -2967,10 +2976,9 @@ $("liramDlg").addEventListener("contextmenu", async (e) => {
   const chip = e.target.closest?.(".lr-chip");
   if (!chip) return;
   e.preventDefault();
-  if (!chip.dataset.copy) { toast("המספר נעול: לבדוק מול הטופס ולאשר ב-✔"); return; }
   if (!(await lrCopy(chip.dataset.copy))) { toast("ההעתקה נכשלה"); return; }
   if (chip.dataset.code) liram.done.add(chip.dataset.code);
-  toast(`${chip.querySelector("span").textContent} הועתק. עכשיו Ctrl+V בתא בלירם`);
+  lrCopied(chip, chip.querySelector("span").textContent);
 });
 $("liramDlg").addEventListener("dragstart", (e) => {
   const val = e.target.closest?.("[data-copy]");

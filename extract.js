@@ -36,15 +36,20 @@ function ocrWorker() {
 
 // One worker reads one page at a time, so OCR jobs wait for each other.
 let ocrQueue = Promise.resolve();
-function ocr(canvas, onProgress, full = false) {
+// With `layout` (Tesseract's page segmentation mode) it returns the words with their places, not just the text.
+function ocr(canvas, onProgress, layout = "") {
   const job = ocrQueue.then(async () => {
     const w = await ocrWorker();
     ocrProgress = (m) => { if (m.status === "recognizing text") onProgress(m.progress); };
     try {
-      const { data } = await w.recognize(canvas, {}, full ? { text: true, blocks: true } : undefined);
-      return full ? data : data.text;
+      if (layout) await w.setParameters({ tessedit_pageseg_mode: layout });
+      const { data } = await w.recognize(canvas, {}, layout ? { text: true, blocks: true } : undefined);
+      return layout ? data : data.text;
     }
-    finally { ocrProgress = null; }
+    finally {
+      ocrProgress = null;
+      if (layout) await w.setParameters({ tessedit_pageseg_mode: "3" });
+    }
   });
   ocrQueue = job.catch(() => {});
   return job;
@@ -285,8 +290,13 @@ export async function rotatePreview(dataUrl, deg) {
 // Reads a saved picture again: turned by deg, or turned the right way up by itself when deg is null.
 // Where the values of a form 106 stand on its saved picture, as parts of its size: { key: { top, bottom, left,
 // right, exact } }. Not exact: the number is not on the picture as read, and this is where its line has it.
-// A value not listed has no place found at all. `others` is every other number on the page, with its `text`.
-export async function findOnPicture(dataUrl, f, onProgress = () => {}) {
+// A value not listed has no place found at all. `others` is every other amount of a line that has a code in the
+// form's "שדה/סעיף" column, with its `text`. Where two readings of the picture differ, the one the document's own
+// reading (`read`) confirms stands.
+export function numberInReading(digits, read) {
+  return new RegExp(`(?<![\\d.])${digits.replace(".", "\\.")}(?!\\d)`).test(read);
+}
+export async function findOnPicture(dataUrl, f, read = "", onProgress = () => {}) {
   const img = await loadImage(dataUrl);
   const k = Math.max(1, 2200 / Math.max(img.naturalWidth, img.naturalHeight));
   const c = document.createElement("canvas");
@@ -305,11 +315,13 @@ export async function findOnPicture(dataUrl, f, onProgress = () => {}) {
   };
   const values = F106_FIELDS.filter(([key]) => f[key] != null), out = {};
   let lines = [];
-  const ownLines = ([, , nameRe, codeRe], rows) => rows.filter((l) => nameRe.test(l.text) || codeRe?.test(l.text));
-  // A scan reads best as it is, a clean table without its lines: what the first pass missed gets the second.
-  for (const [i, picture] of [c, null].entries()) {
-    if (i && values.every(([key]) => out[key])) break;
-    const data = await ocr(picture || noLines(c), (x) => onProgress((i + x) / 2), true);
+  // the line with the code first: a form may repeat a line's name without one
+  const ownLines = ([, , nameRe, codeRe], rows) => [...rows.filter((l) => codeRe?.test(l.text)), ...rows.filter((l) => nameRe.test(l.text) && !codeRe?.test(l.text))];
+  // A scan reads best as it is, a clean table without its lines and read as loose words: only together do
+  // they find every number on a form (28 of 76 alone, all of them together).
+  const clean = noLines(c), passes = [[c, "3"], [clean, "6"], [clean, "11"]];
+  for (const [i, [picture, layout]] of passes.entries()) {
+    const data = await ocr(picture, (x) => onProgress((i + x) / passes.length), layout);
     const rows = (data.blocks || []).flatMap((b) => b.paragraphs.flatMap((p) => p.lines));
     lines = [...lines, ...rows];
     for (const field of values) {
@@ -328,13 +340,32 @@ export async function findOnPicture(dataUrl, f, onProgress = () => {}) {
     const line = ownLines(field, lines)[0];
     if (!out[field[0]] && line && col) out[field[0]] = { ...spot(line.bbox, false), left: col.left, right: col.right };
   }
-  const others = [], taken = Object.values(out);
+  // "סעיף 17" has no row in Liram, so it comes through the others like any line with a code
+  const others = [], taken = Object.entries(out).filter(([key]) => key !== "niWage").map(([, at]) => at), plain = String(read).replace(/,/g, "");
   const over = (p, q) => p.left < q.right && q.left < p.right && p.top < q.bottom && q.top < p.bottom;
-  for (const w of lines.flatMap((l) => l.words)) {
-    const text = w.text.match(/\d[\d,]*(?:\.\d+)?/)?.[0];
-    if (!text) continue;
-    const at = spot(digitsBox(w), true);
-    if (![...taken, ...others].some((x) => over(x, at))) others.push({ ...at, text });
+  const sure = (text) => numberInReading(text.replace(/,/g, ""), plain);
+  const mid = (p) => (p.top + p.bottom) / 2, median = (list) => [...list].sort((p, q) => p - q)[list.length >> 1];
+  const words = lines.flatMap((l) => l.words).map((w) => ({ raw: w.text, ...spot(digitsBox(w), true) }));
+  const high = median(words.map((w) => w.bottom - w.top)) || 0.012;
+  // the codes stand in the page's right-hand column, under its heading
+  const CODE_COLUMN = 0.7, head = words.find((w) => w.left > CODE_COLUMN && /שדה/.test(w.raw))?.top ?? 0;
+  // the table of the months' work ends it: its columns would pass for codes
+  const foot = words.filter((w) => w.top > head && /חודשי|^חודש$/.test(w.raw)).map((w) => w.top).sort((p, q) => p - q)[0] ?? 1;
+  const inColumn = words.filter((w) => w.left > CODE_COLUMN && w.top >= head && w.top < foot), sameRow = (p, q) => Math.abs(mid(p) - mid(q)) < high * 0.7;
+  // three digits or a pair, or a line headed "סעיף 17" (the column's own heading aside)
+  const codes = inColumn.filter((w) => /^\D*\d{3}(?:\/\d{2,3})?\D*$/.test(w.raw) || (/סעיף/.test(w.raw) && w.top > head + high));
+  // the amounts line up in one column, the one of the values found above
+  const column = median(taken.filter((x) => x.exact).map((x) => x.right));
+  for (const w of words) {
+    const text = w.raw.match(/\d[\d,]*(?:\.\d+)?/)?.[0];
+    if (!text || w.left > CODE_COLUMN || text.replace(/\D/g, "").length < 3) continue;
+    if (column != null && Math.abs(w.right - column) > 0.06) continue;
+    if (!codes.some((c) => sameRow(c, w))) continue;
+    const at = { top: w.top, bottom: w.bottom, left: w.left, right: w.right, exact: true, text };
+    if (taken.some((x) => over(x, at))) continue;
+    const same = others.findIndex((x) => over(x, at));
+    if (same < 0) others.push(at);
+    else if (sure(text) && !sure(others[same].text)) others[same] = at;
   }
   return { ...out, others };
 }

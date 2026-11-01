@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=52">
+<link rel="stylesheet" href="style.css?v=53">
 </head>
 <body>
 
@@ -496,7 +496,7 @@
 
 <dialog id="liramDlg" class="liram-dlg">
   <div class="lr-head"><h2 id="lrTitle"></h2><button type="button" class="ghost" id="lrClose">סגירה</button></div>
-  <p class="hint">פותחים את הדף ליד לירם. לוחצים על מספר ועוברים ל-Ctrl+V בתא שלו בלירם, או גוררים אותו לתא. מספר שהועתק נצבע באפור. מספר בצהוב נעול עד שמשווים אותו לטופס ומאשרים. במסך המלא רואים את הטופס המקורי כמו שהוא: מעבירים את העכבר על מספר, הוא נצבע בכחול כפי שנקרא, ומשם גוררים אותו.</p>
+  <p class="hint">פותחים את הדף ליד לירם. לוחצים על מספר ועוברים ל-Ctrl+V בתא שלו בלירם, או גוררים אותו לתא. מספר שהועתק נצבע באפור. מספר באדום לא בטוח: כדאי להשוות אותו לטופס. במסך המלא רואים את הטופס המקורי כמו שהוא: מעבירים את העכבר על מספר, הוא נצבע בכחול כפי שנקרא, ומשם גוררים אותו.</p>
   <div class="lr-tools">
     <button type="button" class="ghost" id="lrFull"></button>
     <span class="lr-stage-tools" id="lrStageTools" hidden>
@@ -507,6 +507,7 @@
     </span>
   </div>
   <p class="soon" id="lrBusy" hidden></p>
+  <div class="lr-copied" id="lrCopied" hidden></div>
   <div class="lr-body">
     <div class="lr-stage" id="lrStage" hidden></div>
     <div class="lr-side">
@@ -525,6 +526,6 @@
 <div id="toast" popover="manual" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=74"></script>
+<script type="module" src="app.js?v=75"></script>
 </body>
 </html>
