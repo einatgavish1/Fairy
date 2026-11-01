@@ -620,16 +620,17 @@ input[type="number"]:not([name="pct"])::-webkit-outer-spin-button { -webkit-appe
 .liram-dlg.full .lr-body { display: flex; gap: 12px; flex: 1; min-height: 0; }
 .liram-dlg.full .lr-side { width: 400px; flex: none; overflow: auto; }
 .liram-dlg.full .lr-srcs { display: none; }
-.lr-stage { --see: .5; --zoom: 1.7; flex: 1; min-width: 0; overflow: auto; }
+.lr-stage { --zoom: 1.7; flex: 1; min-width: 0; overflow: auto; }
 .lr-sheet { position: relative; width: calc(var(--zoom) * 100%); container-type: inline-size; background: #fff; }
 .lr-sheet img { display: block; width: 100%; }
-.lr-chip { position: absolute; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 2px; line-height: 1; direction: ltr; white-space: nowrap; outline: 1px solid #1f8a3d; border-radius: 2px; cursor: grab; }
-.lr-chip span { flex: 1; text-align: center; background: #fff; color: #0b3fd1; font-weight: 700; opacity: var(--see); }
-.lr-chip:hover { outline-width: 2px; }
-.lr-chip.locked { outline: 2px solid #e6a800; cursor: not-allowed; }
-.lr-chip.guess { outline-style: dashed; }
-.lr-chip.done { outline-color: #9aa3ad; }
-.lr-chip button { padding: 0 3px; font-size: 11px; line-height: 1.3; border: 0; border-radius: 3px; background: #ffcc00; color: #123; cursor: pointer; }
+.lr-chip { position: absolute; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 2px; line-height: 1; direction: ltr; white-space: nowrap; border-radius: 2px; cursor: grab; }
+.lr-chip span { flex: 1; text-align: center; background: #fff; color: #0b3fd1; font-weight: 700; visibility: hidden; }
+.lr-chip button { display: none; padding: 0 3px; font-size: 11px; line-height: 1.3; border: 0; border-radius: 3px; background: #ffcc00; color: #123; cursor: pointer; }
+.lr-chip:hover { outline: 2px solid #0b3fd1; }
+.lr-chip:hover span { visibility: visible; }
+.lr-chip:hover button { display: block; }
+.lr-chip.locked { cursor: not-allowed; }
+.lr-chip.locked:hover { outline-color: #e6a800; }
 @media (max-width: 900px) {
   .liram-dlg.full .lr-body { flex-direction: column; overflow: auto; }
   .liram-dlg.full .lr-side { width: auto; }

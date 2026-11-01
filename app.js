@@ -2847,8 +2847,8 @@ function renderLiram() {
   });
   renderStage(forms);
 }
-// Form over form: the picture of the form, and over each number on it the value as read, with a see-through
-// that can be changed. A wrong number shows as two numbers on top of each other. Each one drags from where it is.
+// Form over form: the picture of the form as it is, and over each number on it the value as read, shown in blue
+// while the mouse is on it. So the two are compared at a glance, and the number drags from where it stands.
 function renderStage(forms) {
   $("lrStage").hidden = !$("liramDlg").classList.contains("full");
   $("lrFormPick").innerHTML = forms.map((x) => `<option value="${esc(x.r.id)}">${esc(x.f.employer || x.r.title || "")}</option>`).join("");
@@ -2934,10 +2934,6 @@ $("lrZoom").addEventListener("input", (e) => {
   $("lrZoomOut").textContent = `${e.target.value}%`;
 });
 $("lrFormPick").addEventListener("change", (e) => { liram.form = e.target.value; renderLiram(); });
-$("lrSee").addEventListener("input", (e) => {
-  $("lrStage").style.setProperty("--see", e.target.value / 100);
-  $("lrSeeOut").textContent = `${e.target.value}%`;
-});
 $("liramDlg").addEventListener("click", async (e) => {
   const val = e.target.closest("[data-copy]");
   if (val && !val.disabled && !e.target.closest("[data-lrok]")) {
