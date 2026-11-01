@@ -2871,13 +2871,18 @@ function renderStage(forms) {
     const free = solo && !why;
     return `<div class="lr-chip${why ? " locked" : ""}${at.exact ? "" : " guess"}${liram.done.has(mark) ? " done" : ""}" data-id="${esc(cur.r.id)}" data-k="${k}"${free ? ` data-copy="${n}" data-code="${mark}" draggable="true"` : ""}
       style="top:${((at.top + at.bottom - high) / 2) * 100}%;left:${at.left * 100}%;min-width:${(at.right - at.left) * 100}%;height:${high * 100}%;font-size:${(high * ratio * 82).toFixed(2)}cqw"
-      title="${esc(code)} · ${esc(name)}${why ? ` · ${esc(why)}` : solo ? "" : " · כמה טפסים: לגרור את הסכום מהטבלה"}"><span>${grouped(n)}</span>${why ? '<button type="button" data-lrok title="בדקתי מול הטופס">✔</button>' : ""}</div>`;
+      title="${esc(code)} · ${esc(name)}${why ? ` · ${esc(why)}` : solo ? "" : " · כמה טפסים: הסכום המחובר נגרר מהרשימה"}"><span>${grouped(n)}</span>${why ? '<button type="button" data-lrok title="בדקתי מול הטופס">✔</button>' : ""}</div>`;
   }).join("")}</div>`;
-  if (spots !== liram.shown && Object.keys(spots).length) {
-    liram.shown = spots;
-    $("lrStage").querySelector(".lr-chip")?.scrollIntoView({ block: "center", inline: "center" });
-  }
+  lrFit();
 }
+// At 100% the whole form fits the window.
+function lrFit() {
+  const stage = $("lrStage"), img = stage.querySelector(".lr-sheet img");
+  if (!img || stage.hidden) return;
+  const ratio = (img.naturalHeight || 1414) / (img.naturalWidth || 1000);
+  stage.style.setProperty("--fit", `${Math.min(stage.clientWidth, stage.clientHeight / ratio)}px`);
+}
+addEventListener("resize", lrFit);
 // A picture's form is searched for each number once, when the page opens: this is what shows its line.
 async function lrLocate() {
   const waiting = lrForms().filter((x) => !liram.spots.has(x.r.id));
