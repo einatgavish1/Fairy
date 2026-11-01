@@ -1,8 +1,8 @@
 import { firebaseConfig, OWNER_EMAILS, AI_READING } from "./firebase-config.js?v=2";
-import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview, pageCount, parse106, F106_FIELDS } from "./extract.js?v=20";
+import { readFile, parseText, CATEGORY_NAMES, DOC_TYPE_NAMES, READABLE, MIME, rotatePreview, rereadPreview, pageCount, parse106, F106_FIELDS } from "./extract.js?v=21";
 import { SHEET_EXT, readWorkbook, tableRows } from "./sheets.js?v=1";
-import { ACCOUNTS, EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=6";
-import { fillFromPath } from "./recheck.js?v=7";
+import { ACCOUNTS, EXPENSE_ACCOUNTS, OWNER_ACCOUNT, accountName, accountOf, suggestAccount } from "./accounts.js?v=7";
+import { fillFromPath } from "./recheck.js?v=8";
 import { parseComparative, comparativeFromDocs, buildFiling, filingSheet, comparativeSheet, lineOf } from "./report.js?v=3";
 
 const $ = (id) => document.getElementById(id);
@@ -11,6 +11,10 @@ const showDate = (iso) => (iso ? iso.split("-").reverse().join(".") : "");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const round2 = (n) => Math.round(n * 100) / 100;
 const net = (r) => round2((r.amount || 0) - (r.vat || 0));
+// VAT inside a total: 18% from 2025, 17% before.
+const vatOf = (amount, date) => { const rate = date && date < "2025-01-01" ? 0.17 : 0.18; return round2((amount * rate) / (1 + rate)); };
+// An amount as shown in a field: thousands with a comma.
+const grouped = (n) => (n === "" || n == null || isNaN(n) ? "" : (+n).toLocaleString("en-US", { maximumFractionDigits: 2 }));
 
 function toast(msg) {
   const t = $("toast");
@@ -528,8 +532,11 @@ function calcFocus(e) {
     const v = calcValue(el.value);
     if (isCalc(el.value) && v != null && !Number.isNaN(v)) {
       el.dataset.expr = el.value.trim();
-      el.value = el.dataset.shown = String(round2(v));
-    } else if (!isCalc(el.value)) delete el.dataset.expr;
+      el.value = el.dataset.shown = grouped(round2(v));
+    } else if (!isCalc(el.value)) {
+      delete el.dataset.expr;
+      if (v != null && !Number.isNaN(v)) el.value = grouped(v);
+    }
     el.dispatchEvent(new Event("input", { bubbles: true }));
   }
   calcHint(el);
@@ -545,8 +552,8 @@ function fieldsHtml(v) {
       const all = val && !list.some(([o]) => o === val) ? [[val, val], ...list] : list;
       input = `<select name="${f.k}"><option value=""></option>${all.map(([o, t]) => `<option value="${esc(o)}"${o === val ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
     } else if (f.calc) {
-      const expr = v[f.k + "Calc"] || "";
-      input = `<input name="${f.k}" type="text" inputmode="decimal" dir="ltr" autocomplete="off" data-calc="1" value="${esc(val)}"${expr ? ` data-expr="${esc(expr)}" data-shown="${esc(val)}"` : ""}${f.need ? ' placeholder="אפשר לחשב: 78.33+80.10"' : ""}><small class="calc-hint"></small>`;
+      const expr = v[f.k + "Calc"] || "", shown = grouped(val);
+      input = `<input name="${f.k}" type="text" inputmode="decimal" dir="ltr" autocomplete="off" data-calc="1" value="${esc(shown)}"${expr ? ` data-expr="${esc(expr)}" data-shown="${esc(shown)}"` : ""}${f.need ? ' placeholder="אפשר לחשב: 78.33+80.10"' : ""}><small class="calc-hint"></small>`;
     } else {
       input = `<input name="${f.k}" type="${f.type || "text"}" value="${esc(val)}"${f.list ? ` list="${f.list}" autocomplete="off"` : ""}${f.type === "number" ? ` step="${f.step || (f.exact ? "any" : "0.01")}" inputmode="decimal" dir="ltr"` : ""}${f.min != null ? ` min="${f.min}" max="${f.max}"` : ""}>`;
     }
@@ -563,12 +570,22 @@ function bindFields(box) {
     if (home && pct.value === "") pct.value = HOME_PCT;
     if (home && ["paid", "pct", "account"].includes(e?.target.name)) {
       const paid = calcValue(box.querySelector("[name=paid]").value);
-      if (paid != null && !Number.isNaN(paid)) box.querySelector("[name=amount]").value = round2(paid * (parseFloat(pct.value) || 0) / 100);
+      if (paid != null && !Number.isNaN(paid)) box.querySelector("[name=amount]").value = grouped(round2(paid * (parseFloat(pct.value) || 0) / 100));
+    }
+    // The VAT comes out of the total: filled in while nobody typed it, and left alone once someone did.
+    const vatBox = box.querySelector("[name=vat]"), total = calcValue(box.querySelector("[name=amount]").value);
+    if (e?.target === vatBox) delete vatBox.dataset.auto;
+    else if (vatBox.value === "" || vatBox.dataset.auto) {
+      const can = total && !Number.isNaN(total) && !box.querySelector("[name=currency]").value;
+      vatBox.value = can ? grouped(vatOf(total, box.querySelector("[name=date]").value)) : "";
+      vatBox.dataset.auto = "1";
     }
     box.querySelectorAll("label[data-need='1']").forEach((l) => l.classList.toggle("miss", !l.querySelector("input,select").value));
     box.querySelectorAll("[data-calc]").forEach(calcHint);
     const r = readFields(box);
-    box.querySelector(".calc").textContent = r.amount ? `לפני מע״מ: ${fmt(net(r))}` : "";
+    // an exempt dealer records the total; a licensed one the sum before VAT, with the VAT apart
+    const licensed = dealerOf(r.client, r.date) === "licensed";
+    box.querySelector(".calc").textContent = !r.amount ? "" : licensed ? `לפני מע״מ: ${fmt(net(r))}${vatBox.dataset.auto ? " · המע״מ חושב מהסכום, לא נקרא מהמסמך" : ""}` : `עוסק פטור: נרשם הסכום הכולל ${fmt(r.amount)}`;
   };
   box.addEventListener("input", update);
   box.addEventListener("focusin", calcFocus);
@@ -1067,7 +1084,10 @@ async function processFile(file, path, batch, page = null) {
   fillFromPath(rec, `${text}\n${alt}`);
   // Claude's account, from the items it saw, unless one was chosen by hand.
   if (ai?.account && rec.accountBy !== "hand") Object.assign(rec, { account: ai.account, accountBy: "auto" });
-  const why = [...reviewReasons(rec, { exceptId: reread?.id, noText: !ai && !failed && !text.trim() && !alt.trim(), failed: ai ? "" : failed }),
+  // The VAT the document did not show comes out of the total; a licensed dealer's is worth a look.
+  const vatWorkedOut = rec.vat == null && rec.amount && !foreign(rec) && rec.category !== "תרומות";
+  if (vatWorkedOut) rec.vat = vatOf(rec.amount, rec.date);
+  const why = [...(vatWorkedOut && dealerOf(rec.client, rec.date) === "licensed" ? ["המע״מ חושב מהסכום, לא נקרא מהמסמך"] : []), ...reviewReasons(rec, { exceptId: reread?.id, noText: !ai && !failed && !text.trim() && !alt.trim(), failed: ai ? "" : failed }),
     ...(ai?.unclear ? [ai.unclear] : []), ...doubtNote(ai ? {} : found)];
   if (ai) failed = "";
   rec.status = failed ? "failed" : why.length ? "review" : "ok";
@@ -1586,7 +1606,7 @@ async function fillRate(id) {
   }
   const set = (k, v) => { const el = box.querySelector(`[name=${k}]`); if (el) el.value = v; };
   set("rate", got.rate);
-  set("amount", round2(f.origAmount * got.rate));
+  set("amount", grouped(round2(f.origAmount * got.rate)));
   box.dispatchEvent(new Event("input"));
   const shown = { ...f, rate: got.rate, rateDate: got.day, amount: round2(f.origAmount * got.rate) };
   $("dlgFx").innerHTML = `${esc(fxNote(shown))} · השער מבנק ישראל, לחצו שמירה · <a href="${BOI_PAGE}" target="_blank" rel="noopener">שערי בנק ישראל</a>`;
@@ -1689,7 +1709,8 @@ function dialogPicture(id, src, r) {
       for (const k of ["date", "supplier", "supplierId", "customer", "category", "docType", "docNo", "amount", "vat", "details", "account"]) {
         const input = $("dlgFields").querySelector(`[name=${k}]`);
         if (!input || found[k] === "" || found[k] == null) continue;
-        input.value = found[k];
+        input.value = input.dataset.calc ? grouped(found[k]) : found[k];
+        if (k === "vat") delete input.dataset.auto;
         n++;
       }
       $("dlgFields").dispatchEvent(new Event("input"));
@@ -2922,7 +2943,8 @@ async function openIncome(id) {
   $("iWhole").hidden = !r.fileName;
   const amountBox = (k, label) => {
     const expr = r[k + "Calc"] || "", val = r[k] ?? "";
-    return `<label>${label}<input name="${k}" type="text" inputmode="decimal" dir="ltr" autocomplete="off" data-calc="1" value="${esc(val)}"${expr ? ` data-expr="${esc(expr)}" data-shown="${esc(val)}"` : ""}><small class="calc-hint"></small></label>`;
+    const shown = grouped(val);
+    return `<label>${label}<input name="${k}" type="text" inputmode="decimal" dir="ltr" autocomplete="off" data-calc="1" value="${esc(shown)}"${expr ? ` data-expr="${esc(expr)}" data-shown="${esc(shown)}"` : ""}><small class="calc-hint"></small></label>`;
   };
   const options = (list, val) => list.map(([v, t]) => `<option value="${esc(v)}"${v === val ? " selected" : ""}>${esc(t)}</option>`).join("");
   const types = INCOME_TYPES.includes(r.docType) || !r.docType ? INCOME_TYPES : [r.docType, ...INCOME_TYPES];

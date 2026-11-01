@@ -610,7 +610,7 @@ function findDate(lines) {
   return best?.d || "";
 }
 
-const ID_RE = new RegExp(`(?:ח${Q}\\.?\\s?פ|ע${Q}\\.?\\s?מ|עוסק\\s*מורשה|עוסק\\s*פטור|מס['׳]?\\s*עוסק|מספר\\s*עוסק|ת\\.?\\s?ז|vat\\s*(?:no|id|number)|company\\s*(?:no|id))\\D{0,14}(\\d{8,9})`, "i");
+const ID_RE = new RegExp(`(?<![א-ת])(?:ח${Q}\\.?\\s?פ|ע${Q}\\.?\\s?מ|עוסק\\s*מורשה|עוסק\\s*פטור|מס['׳]?\\s*עוסק|מספר\\s*עוסק|ת\\.?\\s?ז|vat\\s*(?:no|id|number)|company\\s*(?:no|id))\\D{0,14}(\\d{8,9})`, "i");
 const DOC_TYPES = [
   [/זיכוי|credit\s*note/i, "חשבונית זיכוי"],
   // "קבלה/חשבונית מס" on a till receipt, the second word often misread ("חשב וכ ית-מם")
@@ -618,13 +618,15 @@ const DOC_TYPES = [
   [new RegExp(`חשבונית\\s*מס\\s*[/\\\\-]?\\s*קבלה|tax\\s*invoice\\s*[/-]?\\s*receipt`, "i"), "חשבונית מס קבלה"],
   [/חשבונית\s*מס|tax\s*invoice/i, "חשבונית מס"],
   [/חשבון\s*עסקה|proforma/i, "חשבון עסקה"],
+  [/תעודת\s*חיוב/, "תעודת חיוב"],
   [/קבלה|receipt/i, "קבלה"],
   [/חשבונית|invoice/i, "חשבונית"],
 ];
-export const DOC_TYPE_NAMES = ["חשבונית מס קבלה", "חשבונית מס", "קבלה", "חשבון עסקה", "חשבונית זיכוי", "חשבונית", "אחר"];
+export const DOC_TYPE_NAMES = ["חשבונית מס קבלה", "חשבונית מס", "קבלה", "חשבון עסקה", "תעודת חיוב", "חשבונית זיכוי", "חשבונית", "אחר"];
 
 function findDocNo(text) {
   const res = [
+    /תעודת\s*חיוב\s*(?:מס(?:פר|['׳.י])?)?\s*:?\s*(\d{3,12})/,
     // "02/001334 :מספר": the same, in a PDF's visual order
     /(?:חשבונית(?:\s*מס)?(?:\s*[/-]?\s*קבלה)?|קבלה|זיכוי)\s*(?:\d{1,3}\/)?0*(\d{1,12})\s*:\s*מספר/,
     // "מספר: 02/001459": a series and the number
@@ -654,10 +656,12 @@ const CUSTOMER_RES = [
   /לכבוד\s*[:\-]?\s*(.*)$/,
   /(?:שם\s*(?:ה)?לקוח|לקוח(?!ות)|שם\s*המזמין|מזמין|bill(?:ed)?\s*to|sold\s*to|customer(?:\s*name)?|client)\s*[:\-]?\s*(.*)$/i,
 ];
+// A clock, or a system's short name in capitals ("ERP"), stands where a name should.
+const NOT_PERSON = /^[A-Z]{2,6}$|^שעה\b|^\d/;
 function findCustomer(lines) {
   // What sits beside the name on the same line (a date, "תאריך:", an ID or phone number) is not part of it.
   const pick = (s) => cleanName(s
-    .replace(/\s+(?:ת\.?\s?ז|ח\.?\s?פ|ע\.?\s?מ|טל|טלפון|מס['׳]|מספר|תאריך|דוא["״']?ל|e-?mail)[.:'׳\s].*$/i, "")
+    .replace(/\s+(?:ת\.?\s?ז|ח\.?\s?פ|ע\.?\s?מ|טלפון|מס['׳]|מספר|תאריך|דוא["״']?ל|e-?mail)[.:'׳\s].*$/i, "").replace(/\s+טל[.:'׳].*$/, "")
     .replace(/\s*\d{1,2}[./-]\d{1,2}[./-]\d{2,4}.*$/, "")
     .replace(/\d{5,}.*$/, "")).replace(/^(?:מר|גב['׳.]?|גברת|ה"ה|לכבוד)\s+/, "");
   const isName = (s) => s.replace(/[^\p{L}]/gu, "").length >= 2 && !/^(?:מס|מספר|קוד|ח\.?פ|ת\.?ז|טלפון|כתובת)/.test(s);
@@ -666,8 +670,11 @@ function findCustomer(lines) {
       const m = line.match(re);
       if (!m) continue;
       let name = pick(m[1]);
-      if (!isName(name) && lines[i + 1] && !NOT_A_NAME.test(lines[i + 1])) name = pick(lines[i + 1]);
-      if (isName(name)) return name;
+      for (const next of lines.slice(i + 1, i + 4)) {
+        if (isName(name) && !NOT_PERSON.test(name)) break;
+        name = NOT_A_NAME.test(next) ? "" : pick(next);
+      }
+      if (isName(name) && !NOT_PERSON.test(name)) return name;
     }
   }
   return "";
