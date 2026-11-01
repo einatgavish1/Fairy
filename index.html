@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=47">
+<link rel="stylesheet" href="style.css?v=48">
 </head>
 <body>
 
@@ -494,11 +494,23 @@
   </form>
 </dialog>
 
+<dialog id="liramDlg" class="liram-dlg">
+  <div class="lr-head"><h2 id="lrTitle"></h2><button type="button" class="ghost" id="lrClose">סגירה</button></div>
+  <p class="hint">פותחים את הדף ליד לירם. לוחצים על מספר ועוברים ל-Ctrl+V בתא שלו בלירם, או גוררים אותו לתא. מספר שהועתק נצבע באפור. מספר בצהוב נעול עד שמשווים אותו לשורת הטופס ומאשרים.</p>
+  <div class="lr-forms" id="lrForms"></div>
+  <p class="soon" id="lrBusy" hidden></p>
+  <table class="lr-table">
+    <thead><tr><th>שורה</th><th>תיאור</th><th>בן זוג רשום</th><th>בן/בת זוג</th></tr></thead>
+    <tbody id="lrRows"></tbody>
+  </table>
+  <p class="lr-count" id="lrCount"></p>
+</dialog>
+
 <dialog id="imgDlg" class="img-dlg"><form method="dialog"><img id="imgBig" alt=""><button class="ghost">סגירה</button></form></dialog>
 
 <div id="toast" popover="manual" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=68"></script>
+<script type="module" src="app.js?v=69"></script>
 </body>
 </html>

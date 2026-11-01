@@ -36,11 +36,14 @@ function ocrWorker() {
 
 // One worker reads one page at a time, so OCR jobs wait for each other.
 let ocrQueue = Promise.resolve();
-function ocr(canvas, onProgress) {
+function ocr(canvas, onProgress, full = false) {
   const job = ocrQueue.then(async () => {
     const w = await ocrWorker();
     ocrProgress = (m) => { if (m.status === "recognizing text") onProgress(m.progress); };
-    try { return (await w.recognize(canvas)).data.text; }
+    try {
+      const { data } = await w.recognize(canvas, {}, full ? { text: true, blocks: true } : undefined);
+      return full ? data : data.text;
+    }
     finally { ocrProgress = null; }
   });
   ocrQueue = job.catch(() => {});
@@ -179,17 +182,22 @@ async function readPdf(file, onProgress, only = 0) {
   const first = await renderPage(await pdf.getPage(from), 1100);
   const preview = toPreview(first);
   let text = fixVisualOrder(lines).join("\n");
-  // A scan saved as PDF has (almost) no text: read the page pictures instead.
-  if (text.replace(/[^\p{L}\d]/gu, "").length < 40) {
-    const parts = [];
-    let firstPage = null;
+  // A scan saved as PDF has (almost) no text: read the page pictures instead. So too a PDF whose words are
+  // text but whose numbers are not (the police's form 106): the money is only in the picture.
+  const letters = text.replace(/[^\p{L}\d]/gu, "").length, noNumbers = letters > 150 && text.replace(/\D/g, "").length < 8;
+  if (letters < 40 || noNumbers) {
+    const parts = [], canvases = [];
     for (let p = from; p < from + pages; p++) {
       const canvas = await renderPage(await pdf.getPage(p), 2200);
-      if (p === from) firstPage = canvas;
-      parts.push(await ocr(canvas, (x) => onProgress(0.1 + 0.8 * ((p - from + x) / pages), `מזהה טקסט בעמוד ${p}…`)));
+      const clean = noNumbers ? noLines(canvas) : canvas;
+      canvases.push(clean);
+      parts.push(await ocr(clean, (x) => onProgress(0.1 + 0.8 * ((p - from + x) / pages), `מזהה טקסט בעמוד ${p}…`)));
     }
     const scanned = parts.join("\n");
-    return { text: scanned, alt: await secondReading(firstPage, scanned, onProgress), preview, ocr: true };
+    if (!noNumbers) return { text: scanned, alt: await secondReading(canvases[0], scanned, onProgress), preview, ocr: true };
+    // the page that holds the money is the one to keep and to read twice
+    const digits = parts.map((t) => t.replace(/\D/g, "").length), main = digits.indexOf(Math.max(...digits));
+    return { text: scanned, alt: await secondReading(canvases[main], scanned, onProgress), preview: toPreview(canvases[main]), ocr: true };
   }
   // A supplier is often known only by its logo (Gett, say), which is a picture, not text. When the text
   // doesn't tell the service, the top of the first page is read as a picture too, for the logo's words.
@@ -275,6 +283,30 @@ export async function rotatePreview(dataUrl, deg) {
 }
 
 // Reads a saved picture again: turned by deg, or turned the right way up by itself when deg is null.
+// Where on a saved picture each amount stands, as parts of its size: { amount: { top, bottom, left, right } }.
+// An amount not listed was not found there. Used to show the form's own digits beside the number.
+export async function findOnPicture(dataUrl, amounts, onProgress = () => {}) {
+  const img = await loadImage(dataUrl);
+  const k = Math.max(1, 2200 / Math.max(img.naturalWidth, img.naturalHeight));
+  const c = document.createElement("canvas");
+  c.width = Math.round(img.naturalWidth * k);
+  c.height = Math.round(img.naturalHeight * k);
+  const x = c.getContext("2d");
+  x.imageSmoothingQuality = "high";
+  x.filter = "grayscale(1) contrast(1.25)";
+  x.drawImage(img, 0, 0, c.width, c.height);
+  const data = await ocr(c, onProgress, true);
+  const lines = (data.blocks || []).flatMap((b) => b.paragraphs.flatMap((p) => p.lines));
+  const out = {};
+  for (const n of amounts) {
+    const digits = String(Math.round(n)), alone = new RegExp(`(?<!\\d)${digits}(?!\\d)`);
+    const word = lines.flatMap((l) => l.words).find((w) => w.text.replace(/\D/g, "") === digits);
+    const box = (word || lines.find((l) => alone.test(l.text.replace(/[,\s]/g, ""))))?.bbox;
+    if (box) out[n] = { top: box.y0 / c.height, bottom: box.y1 / c.height, left: box.x0 / c.width, right: box.x1 / c.width };
+  }
+  return out;
+}
+
 export async function rereadPreview(dataUrl, deg = null, onProgress = () => {}) {
   const img = await loadImage(dataUrl);
   // The saved picture is small; enlarging it a little gives the reading more to work with.
@@ -322,6 +354,32 @@ function binarize(src) {
       / ((x1 - x0 + 1) * (y1 - y0 + 1));
     const v = p[(y * W + i) * 4] < mean * 0.88 ? 0 : 255;
     p[(y * W + i) * 4] = p[(y * W + i) * 4 + 1] = p[(y * W + i) * 4 + 2] = v;
+  }
+  x.putImageData(img, 0, 0);
+  return c;
+}
+
+// A table's lines, gone: OCR takes the frames around numbers for letters and loses the numbers in them.
+// A line is a straight run of ink longer than any character; it is painted white with a pixel to each side.
+function noLines(src) {
+  const c = document.createElement("canvas");
+  c.width = src.width;
+  c.height = src.height;
+  const x = c.getContext("2d");
+  x.drawImage(src, 0, 0);
+  const W = c.width, H = c.height, img = x.getImageData(0, 0, W, H), p = img.data;
+  const ink = (i, y) => p[(y * W + i) * 4] < 140, long = Math.round(W / 25), wipe = [];
+  for (let y = 0; y < H; y++) {
+    let run = 0;
+    for (let i = 0; i <= W; i++) { if (i < W && ink(i, y)) run++; else { if (run >= long) wipe.push([i - run, y, run, 1]); run = 0; } }
+  }
+  for (let i = 0; i < W; i++) {
+    let run = 0;
+    for (let y = 0; y <= H; y++) { if (y < H && ink(i, y)) run++; else { if (run >= long) wipe.push([i, y - run, 1, run]); run = 0; } }
+  }
+  for (const [a, b, w, h] of wipe) for (let y = Math.max(0, b - 1); y < Math.min(H, b + h + 1); y++) for (let i = Math.max(0, a - 1); i < Math.min(W, a + w + 1); i++) {
+    const q = (y * W + i) * 4;
+    p[q] = p[q + 1] = p[q + 2] = 255;
   }
   x.putImageData(img, 0, 0);
   return c;
@@ -881,31 +939,39 @@ function parseOne(text, hint = "", opts = {}) {
 // Form 106, every field that goes into the annual report. By the name of each line and its code, from both
 // readings of the form: what they read differently is listed in `doubt` (the larger number is kept, since
 // a misreading usually loses digits). Whatever is not found stays empty, to fill in by hand.
+// A code alone: not the digits of an amount ("158,000", "12,045").
+const f106Code = (...codes) => new RegExp(`(?<![\\d,.])(?:${codes.join("|")})(?!\\d|[,.]\\d)`);
 export const F106_FIELDS = [
   // [key, label, the line's name, its code]
-  ["gross", "משכורת (158/172)", /(?<![א-ת])משכורת(?!\s*לצורך)/, /(?<!\d)(?:158|172)(?!\d)/],
-  ["studyWage", "שכר לקרן השתלמות (218/219)", /לקרן\s*השתלמות/, /(?<!\d)(?:218|219)(?!\d)/],
-  ["pensionPay", "הפרשות לקופ״ג לקצבה (248/249)", /הפרשות\s*לקופ/, /(?<!\d)(?:248|249)(?!\d)/],
-  ["insuredWage", "השכר המבוטח לקופ״ג (244/245)", /השכר\s*המבוטח/, /(?<!\d)(?:244|245)(?!\d)/],
+  ["gross", "משכורת (158/172)", /(?<![א-ת])משכורת(?!\s*לצורך)/, f106Code(158, 172)],
+  ["shift", "עבודה במשמרות (068/069)", /במשמרות/, f106Code("068", "069")],
+  ["pension", "הכנסה מקצבה (258/272)", /הכנסה\s*מקצבת/, f106Code(258, 272)],
+  ["studyWage", "שכר לקרן השתלמות (218/219)", /לקרן\s*השתלמות/, f106Code(218, 219)],
+  ["pensionPay", "הפרשות לקופ״ג לקצבה (248/249)", /הפרשות\s*לקופ/, f106Code(248, 249)],
+  ["insuredWage", "השכר המבוטח לקופ״ג (244/245)", /השכר\s*המבוטח/, f106Code(244, 245)],
   ["niWage", "שכר חייב בביטוח לאומי", /שכר\s*חייב/],
-  ["tax", "מס הכנסה (042)", /(?:^|[|\s\d])מס\s*הכנסה\s*[\d,]/, /(?<!\d)042(?!\d)/],
-  ["pensionEmp", "ניכוי לגמל לקצבה כעמית (045/086)", /ניכוי\s*לקופות/, /(?<!\d)(?:045|086)(?!\d)/],
+  ["tax", "מס הכנסה (042)", /(?:^|[|\s\d])מס\s*הכנסה\s*[\d,]/, f106Code("042")],
+  ["lifeIns", "ניכוי לביטוח חיים (036/081)", /לביטוח\s*חיים/, f106Code("036", "081")],
+  ["pensionEmp", "ניכוי לגמל לקצבה כעמית (045/086)", /ניכוי\s*לקופות/, f106Code("045", "086")],
   ["union", "דמי טיפול לארגון עובדים", /ארגון\s*עובדים/],
   ["ni", "דמי ביטוח לאומי", /^(?!.*(?:בריאות|שכר\s*חייב)).*(?<![א-ת])דמי\s*ביטוח/],
   ["health", "דמי ביטוח בריאות", /דמי\s*ביטוח\s*בריאות/],
-  ["convalescence", "מחיר יום הבראה (011/012)", /ההבראה/],
+  ["convalescence", "מחיר יום הבראה (011/012)", /הבראה/],
   ["wageCut", "הפחתת שכר (011/012)", /הפחתת\s*שכר/],
   ["pointsValue", "ערך נקודות זיכוי", /נקודות\s*זיכוי/],
   ["otherCredits", "זיכויים אחרים", /זיכויים\s*אחרים/],
   ["expensesPay", "תשלומים לכיסוי הוצאות", /לכיסוי\s*הוצאות/],
   ["overtime", "שעות נוספות, מאמץ מיוחד", /שעות\s*נוספות/],
 ];
-const F106_CODES = /(?<!\d)(?:158|172|218|219|248|249|244|245|234|042|045|086|011|012)(?!\d)/g;
+const F106_CODES = new RegExp(f106Code(158, 172, "068", "069", 258, 272, 218, 219, 248, 249, 244, 245, 234, "042", "036", "081", "045", "086", "011", "012").source, "g");
 function f106Amount(line, nameRe, codeRe) {
-  // "172/158": the pair of codes goes, and the money is what is left; the last one on the line
+  if (!nameRe.test(line) && !codeRe?.test(line)) return null;
+  // "172/158": the pair of codes goes, and the money is what follows the line's name. A second table may run
+  // on to the left of it on the same line, so it is the first number there.
   const rest = line.replace(/(\d{3})\s*\/\s*(\d{3})/g, " ").replace(F106_CODES, " ").replace(/\b2\.\d\d\b/g, " ");
-  const nums = amountsIn(rest).map((x) => x.n);
-  return nums.length && (nameRe.test(line) || codeRe?.test(line)) ? nums[nums.length - 1] : null;
+  const at = Math.max(0, rest.search(nameRe));
+  const nums = amountsIn(rest.slice(at)).map((x) => x.n);
+  return (nums.length ? nums : amountsIn(rest).map((x) => x.n))[0] ?? null;
 }
 function f106Reading(text) {
   const lines = String(text || "").split("\n").map((l) => l.replace(/[‎‏]/g, "").replace(/\s+/g, " ").trim()).filter(Boolean);
@@ -920,11 +986,13 @@ function f106Reading(text) {
   out.points = all.match(/נקודות\s*זיכוי\s*(\d\.\d{1,2})/)?.[1] || "";
   out.taxFile = all.match(/תיק\s*ניכויים\D{0,6}(\d{9})/)?.[1] || "";
   out.company = all.match(/(?:חברה|ח\.?פ\.?)\D{0,6}(\d{9})/)?.[1] || "";
-  out.idNumber = all.match(/ת\.?\s?ז\.?\D{0,3}(\d{8,9})/)?.[1] || "";
+  out.idNumber = all.match(/[תמ]\.?\s?ז\.?\D{0,3}(\d{8,9})/)?.[1] || "";
   // the employer: its name by label, or the top line, the one above the deductions file
   const file = lines.findIndex((l) => /תיק\s*ניכויים/.test(l));
   const top = file > 0 ? lines[file - 1].replace(/\s*,.*$/, "").replace(/פירוט.*$/, "").trim() : "";
-  out.employer = (lines.map((l) => l.match(/שם\s*(?:ה)?מעסיק[:\s]+([^\d:(]{2,40})/)?.[1]).find(Boolean) || top).trim();
+  const head = lines.findIndex((l) => /פרטי\s*(?:ה)?(?:מעביד|מעסיק)/.test(l));
+  const under = head >= 0 ? lines[head + 1]?.match(/שם[:\s]+(.+?)(?:\s+כתובת|\s+\d|$)/)?.[1] : "";
+  out.employer = (lines.map((l) => l.match(/שם\s*(?:ה)?מעסיק[:\s]+([^\d:(]{2,40})/)?.[1]).find(Boolean) || under || top).trim();
   return out;
 }
 // The fund table: name, kind, wage, rate and amount of each line.
@@ -939,12 +1007,24 @@ function f106Funds(text) {
 export function parse106(text) {
   const [first = "", second = ""] = String(text || "").split("\n----\n");
   const a = f106Reading(first), b = f106Reading(second);
-  const out = { ...a, doubt: [] };
+  // a picture read twice says what only one reading found; a PDF's own text needs neither
+  const out = { ...a, doubt: [], single: [], scan: !!second.trim() };
   for (const [key] of F106_FIELDS) {
     if (a[key] != null && b[key] != null && a[key] !== b[key]) { out[key] = Math.max(a[key], b[key]); out.doubt.push(key); }
     else if (a[key] == null) out[key] = b[key];
+    if (out.scan && (a[key] == null) !== (b[key] == null)) out.single.push(key);
   }
   for (const k of ["year", "points", "taxFile", "company", "idNumber", "employer"]) out[k] = a[k] || b[k];
   out.funds = f106Funds(first).length >= f106Funds(second).length ? f106Funds(first) : f106Funds(second);
+  return out;
+}
+// The form against itself: the lines its fund table adds up to. { key: true } fits, { key: false } does not;
+// a line with nothing to compare is left out.
+export function f106Checks(f) {
+  const funds = f.funds || [], sum = (rows, k) => rows.reduce((t, x) => t + x[k], 0), out = {};
+  const pension = funds.filter((x) => /קצבה/.test(x.name)), study = funds.filter((x) => /השתלמות/.test(x.name));
+  if (pension.length && f.insuredWage != null) out.insuredWage = Math.abs(sum(pension, "wage") - f.insuredWage) <= 2;
+  if (study.length && f.studyWage != null) out.studyWage = study.some((x) => Math.abs(x.wage - f.studyWage) <= 1);
+  if (funds.length > 1 && f.pensionPay != null) out.pensionPay = Math.abs(sum(funds.filter((x) => !study.includes(x)), "amount") - f.pensionPay) <= funds.length;
   return out;
 }

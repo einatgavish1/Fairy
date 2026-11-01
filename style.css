@@ -586,3 +586,29 @@ input[type="number"]:not([name="pct"])::-webkit-outer-spin-button { -webkit-appe
 .f106.doubt { color: #ffcc00; }
 .f106-funds { width: 100%; font-size: 12px; margin-top: 6px; }
 .f106-funds th, .f106-funds td { padding: 2px 4px; }
+.sum-106 .ghost { padding: 3px 10px; font-size: 13px; margin-inline-start: 6px; }
+.liram-dlg { width: min(900px, calc(100vw - 16px)); max-height: calc(100vh - 16px); padding: 12px 14px; }
+.lr-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.lr-head h2 { margin: 0; }
+.liram-dlg .hint { margin: 6px 0; font-size: 13px; }
+.lr-forms { display: grid; gap: 4px; margin-bottom: 8px; }
+.lr-form { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.lr-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.lr-table th { text-align: start; font-size: 12px; padding: 4px; }
+.lr-table td { padding: 3px 4px; border-top: 1px solid var(--glass-line); vertical-align: middle; }
+.lr-no { font-weight: 700; white-space: nowrap; }
+.lr-none { text-align: center; opacity: .5; }
+.lr-val { display: flex; width: 100%; justify-content: space-between; gap: 8px; padding: 6px 10px; border-radius: 8px; border: 1px solid #1f8a3d; background: #d9f5e0; color: #123; cursor: grab; direction: ltr; white-space: nowrap; }
+.lr-val b { font-size: 15px; }
+.lr-val small { color: #456; }
+.lr-val.done { background: #dde0e4; border-color: #9aa3ad; color: #667; }
+.lr-val.locked { background: #fff6cf; border-color: #ffcc00; cursor: not-allowed; opacity: 1; }
+.lr-srcs td { border-top: 0; padding-top: 0; }
+.lr-src { padding: 3px 0; }
+.lr-src.bad { background: rgba(255, 204, 0, .14); border-radius: 8px; padding: 4px 6px; }
+.lr-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.lr-line input { width: 110px; padding: 3px 6px; }
+.lr-line .ghost { padding: 3px 8px; font-size: 12px; }
+.lr-src canvas { display: block; height: 34px; max-width: 100%; margin-top: 3px; border-radius: 4px; cursor: zoom-in; background: #fff; }
+.lr-count { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; }
+.lr-count .lr-val { width: auto; }
