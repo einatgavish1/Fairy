@@ -283,9 +283,10 @@ export async function rotatePreview(dataUrl, deg) {
 }
 
 // Reads a saved picture again: turned by deg, or turned the right way up by itself when deg is null.
-// Where on a saved picture each amount stands, as parts of its size: { amount: { top, bottom, left, right } }.
-// An amount not listed was not found there. Used to show the form's own digits beside the number.
-export async function findOnPicture(dataUrl, amounts, onProgress = () => {}) {
+// Where the values of a form 106 stand on its saved picture, as parts of its size: { key: { top, bottom, left,
+// right, exact } }. Not exact: the number is not on the picture as read, and this is where its line has it.
+// A value not listed has no place found at all.
+export async function findOnPicture(dataUrl, f, onProgress = () => {}) {
   const img = await loadImage(dataUrl);
   const k = Math.max(1, 2200 / Math.max(img.naturalWidth, img.naturalHeight));
   const c = document.createElement("canvas");
@@ -295,14 +296,31 @@ export async function findOnPicture(dataUrl, amounts, onProgress = () => {}) {
   x.imageSmoothingQuality = "high";
   x.filter = "grayscale(1) contrast(1.25)";
   x.drawImage(img, 0, 0, c.width, c.height);
-  const data = await ocr(c, onProgress, true);
-  const lines = (data.blocks || []).flatMap((b) => b.paragraphs.flatMap((p) => p.lines));
-  const out = {};
-  for (const n of amounts) {
-    const digits = String(Math.round(n)), alone = new RegExp(`(?<!\\d)${digits}(?!\\d)`);
-    const word = lines.flatMap((l) => l.words).find((w) => w.text.replace(/\D/g, "") === digits);
-    const box = (word || lines.find((l) => alone.test(l.text.replace(/[,\s]/g, ""))))?.bbox;
-    if (box) out[n] = { top: box.y0 / c.height, bottom: box.y1 / c.height, left: box.x0 / c.width, right: box.x1 / c.width };
+  const spot = (b, exact) => ({ top: b.y0 / c.height, bottom: b.y1 / c.height, left: b.x0 / c.width, right: b.x1 / c.width, exact });
+  const values = F106_FIELDS.filter(([key]) => f[key] != null), out = {};
+  let lines = [];
+  const ownLines = ([, , nameRe, codeRe], rows) => rows.filter((l) => nameRe.test(l.text) || codeRe?.test(l.text));
+  // A scan reads best as it is, a clean table without its lines: what the first pass missed gets the second.
+  for (const [i, picture] of [c, null].entries()) {
+    if (i && values.every(([key]) => out[key])) break;
+    const data = await ocr(picture || noLines(c), (x) => onProgress((i + x) / 2), true);
+    const rows = (data.blocks || []).flatMap((b) => b.paragraphs.flatMap((p) => p.lines));
+    lines = [...lines, ...rows];
+    for (const field of values) {
+      if (out[field[0]]) continue;
+      const digits = String(Math.round(f[field[0]])), alone = new RegExp(`(?<!\d)${digits}(?!\d)`);
+      const isIt = (w) => w.text.replace(/\D/g, "") === digits;
+      // on the value's own line first: the same number may stand on two lines
+      const word = ownLines(field, rows).flatMap((l) => l.words).find(isIt) || rows.flatMap((l) => l.words).find(isIt);
+      const box = (word || rows.find((l) => alone.test(l.text.replace(/[,\s]/g, ""))))?.bbox;
+      if (box) out[field[0]] = spot(box, true);
+    }
+  }
+  // what was not found goes on its line, in the column of those that were
+  const found = Object.values(out).sort((p, q) => p.left - q.left), col = found[found.length >> 1];
+  for (const field of values) {
+    const line = ownLines(field, lines)[0];
+    if (!out[field[0]] && line && col) out[field[0]] = { ...spot(line.bbox, false), left: col.left, right: col.right };
   }
   return out;
 }

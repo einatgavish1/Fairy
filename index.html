@@ -7,7 +7,7 @@
 <title>עינת גביש · רואת חשבון</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=48">
+<link rel="stylesheet" href="style.css?v=49">
 </head>
 <body>
 
@@ -496,14 +496,27 @@
 
 <dialog id="liramDlg" class="liram-dlg">
   <div class="lr-head"><h2 id="lrTitle"></h2><button type="button" class="ghost" id="lrClose">סגירה</button></div>
-  <p class="hint">פותחים את הדף ליד לירם. לוחצים על מספר ועוברים ל-Ctrl+V בתא שלו בלירם, או גוררים אותו לתא. מספר שהועתק נצבע באפור. מספר בצהוב נעול עד שמשווים אותו לשורת הטופס ומאשרים.</p>
-  <div class="lr-forms" id="lrForms"></div>
+  <p class="hint">פותחים את הדף ליד לירם. לוחצים על מספר ועוברים ל-Ctrl+V בתא שלו בלירם, או גוררים אותו לתא. מספר שהועתק נצבע באפור. מספר בצהוב נעול עד שמשווים אותו לטופס ומאשרים. במסך המלא המספרים מונחים על הטופס המקורי ונגררים ישירות ממנו.</p>
+  <div class="lr-tools">
+    <button type="button" class="primary" id="lrFull">🔍 מסך מלא: טופס על טופס</button>
+    <span class="lr-stage-tools" id="lrStageTools" hidden>
+      <select id="lrFormPick" title="איזה טופס להציג"></select>
+      <label>שקיפות <input type="range" id="lrSee" min="0" max="100" value="50"> <output id="lrSeeOut">50%</output></label>
+      <label>גודל הטופס <input type="range" id="lrZoom" min="100" max="300" step="10" value="170"> <output id="lrZoomOut">170%</output></label>
+    </span>
+  </div>
   <p class="soon" id="lrBusy" hidden></p>
-  <table class="lr-table">
-    <thead><tr><th>שורה</th><th>תיאור</th><th>בן זוג רשום</th><th>בן/בת זוג</th></tr></thead>
-    <tbody id="lrRows"></tbody>
-  </table>
-  <p class="lr-count" id="lrCount"></p>
+  <div class="lr-body">
+    <div class="lr-stage" id="lrStage" hidden></div>
+    <div class="lr-side">
+      <div class="lr-forms" id="lrForms"></div>
+      <table class="lr-table">
+        <thead><tr><th>שורה</th><th>תיאור</th><th>בן זוג רשום</th><th>בן/בת זוג</th></tr></thead>
+        <tbody id="lrRows"></tbody>
+      </table>
+      <p class="lr-count" id="lrCount"></p>
+    </div>
+  </div>
 </dialog>
 
 <dialog id="imgDlg" class="img-dlg"><form method="dialog"><img id="imgBig" alt=""><button class="ghost">סגירה</button></form></dialog>
@@ -511,6 +524,6 @@
 <div id="toast" popover="manual" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=69"></script>
+<script type="module" src="app.js?v=70"></script>
 </body>
 </html>
